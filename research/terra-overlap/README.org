@@ -1,0 +1,207 @@
+#+title: Research Spec — Terra ↔ Trace-Spine Structural Overlaps
+#+subtitle: Co-Design as a Substrate Discipline Across Language and Workflow Layers
+#+author: spec-keeper
+#+date: 2026-05-11
+#+options: toc:nil num:nil
+#+property: header-args :mkdirp t
+
+* Charter
+
+A bounded research effort sitting beside the trace-spine team's primary work. The premise: Terra's design decisions (DeVito & Hanrahan, SNAPL 2015) and the trace-spine working discipline share four structural commitments deep enough that translating Terra's enforcement mechanisms into the workflow layer is likely to yield concrete refinements. The research either confirms the parallel earns extraction into workflow primitives, or refutes it cleanly and frees the team from a tempting but spurious analogy.
+
+The research is *not* a Terra reimplementation, *not* a paper, *not* a multi-language port. It is a focused investigation with named refutation conditions and a hard scope. If the findings warrant publication later, that is a downstream decision; the spec does not presume it.
+
+** Roles
+
+| Role                  | Capability scope                                                  |
+|-----------------------+-------------------------------------------------------------------|
+| spec-keeper           | gate L0→L3 climb, accept/reject findings, sign cross-team ADRs |
+| research-investigator | human (named); runs the investigation, drafts findings, owns the artifact |
+| adversary             | agent-fillable under review; constructs counterexamples and refutation cases |
+| reviewer-sjg          | external; consulted on formal-methods framing, not in approval chain |
+
+The research-investigator role is human-only because the work is judgment-heavy (deciding which analogies are structural vs aesthetic) and the deliverable is not code. Agent contributions are scoped to adversary work (constructing potential refutations) and to specific mechanical tasks (corpus extraction, citation gathering) under review.
+
+** What this research is not
+
+- Not a Terra port to Clojure / Ruby / any other language.
+- Not a multi-language meta-programming research thread.
+- Not an attempt to formalize the trace-spine spec in a type-theoretic substrate.
+- Not in the critical path for trace-spine phase-1 acceptance. Findings inform phase-2 decisions; if findings are negative, phase-1 proceeds unchanged.
+
+* The four conjectures under investigation
+
+Each is stated with its refutation condition and the kind of evidence that would settle it.
+
+** C-R1 — Co-design displaces retrofit at the workflow layer too
+
+*Conjecture*: A working discipline co-designed for human + agent collaboration is structurally simpler (measurable by primitive count, by friction-per-operation, or by failure-mode count) than either (a) human discipline with agents retrofit on top, or (b) agent-native workflows with human review retrofit on top.
+
+*Refutation*: Find a concrete co-designed substrate component (e.g., the trace-id trailer + claim ref + notes refs bundle) where the retrofit version is demonstrably simpler by the same measure. If retrofit is simpler in two or more cases, the parallel is aesthetic.
+
+*Evidence shape*: side-by-side comparison of three concrete operations (open a PR, claim work-in-progress, record a refutation) under (a), (b), and the current co-designed substrate. Count primitives invoked, count failure modes the substrate must handle, count steps in the operation.
+
+** C-R2 — Eye-of-the-needle generalizes from value-passing to causal-information-passing
+
+*Conjecture*: Terra's rule that cross-runtime values pass only through narrow primitive channels (no direct GC-object access) and trace-spine's rule that causal information crosses runtime boundaries only via ~traceparent~ are the same primitive at different abstraction layers. Both rules can be derived from a shared substrate property: *one disciplined channel, enforced at substrate-edge, no exceptions*.
+
+*Refutation*: Identify a third domain where the same rule shape applies but the underlying property is *not* this. If the rule is just "use a designated channel" in vague form, the parallel is generic API design and the Terra-specific framing adds nothing.
+
+*Evidence shape*: a formal statement of the proposed shared property; three or more domain instances (Terra values, trace propagation, plus at least one beyond the two paper sources) that satisfy it; a clean discriminator between "narrow channel discipline" and ordinary good API design.
+
+** C-R3 — Substrate-as-meta-language is the same move at language and workflow layers
+
+*Conjecture*: Terra makes Lua its meta-language (rather than building a sublanguage in Terra) for the same structural reason the working discipline makes git its meta-substrate (rather than building a parallel reasoning tracker). The reason is that the host substrate (Lua, git) already has the operational primitives the meta-layer needs, and introducing a second substrate creates impedance cost that swamps any expressivity gain.
+
+*Refutation*: Find a case where introducing a separate meta-substrate clearly outperformed embedding in the host substrate. If meta-substrate-as-second-system is a legitimate equilibrium in some domain, the parallel is contingent on Terra's and git's specific properties, not a general principle.
+
+*Evidence shape*: characterize when the host substrate is rich enough to be its own meta-layer. Candidate criterion: the host substrate must be a first-class data type within itself (Lua values include functions and tables; git objects include refs to other git objects). Test against domains where this is and isn't true.
+
+** C-R4 — Tiny-core-plus-libraries is the load-bearing discipline, not the analogy
+
+*Conjecture*: The actually-load-bearing structural similarity is Steele's "Growing a Language" applied to both Terra and the working discipline. The other three parallels (co-design, eye-of-the-needle, substrate-as-meta) are derivations from this prior commitment.
+
+*Refutation*: Identify a design space where you can have tiny-core-plus-libraries without the other three properties, or where you have the other three properties without tiny core. If they don't co-vary, the tiny-core observation is independent rather than load-bearing.
+
+*Evidence shape*: a 2×2 (or larger) matrix of design choices across multiple systems (Terra, trace-spine working discipline, Erlang/OTP, NixOS, git itself, plus 2-3 more). Test whether tiny-core predicts the other three.
+
+* Methodology
+
+** L0 — Read pass
+
+Both sources have been read once. The read pass for the research is a *closer* read with named outputs:
+
+- *Terra paper*: identify every explicit design rule (not just the three axes). Tabulate each rule with (a) what it enforces, (b) at what substrate layer, (c) what failure mode it prevents.
+- *Working discipline corpus*: tabulate the same for trace-spine spec + kickoff prompt + secondary prompt + visibility-first skill + agent-charter (when available).
+
+Output: two tables, one per source, in [[file:terra-rules.org]] and [[file:discipline-rules.org]]. Rules are numbered for citation.
+
+** L1 — Correspondence map
+
+For each rule in the Terra table, identify the closest correspondent in the discipline table. Most rules will have one; some will have several; some will have none. Flag the asymmetries — rules in one source without a correspondent in the other are as informative as the matches.
+
+Output: [[file:correspondence.org]] with a structured table.
+
+Asymmetries are evidence too. The novel discipline primitives that have no Terra analog are either (a) workflow-layer-specific concerns Terra wouldn't encounter, or (b) places where the analogy stops being useful.
+
+** L2 — Refutation harness
+
+For each of C-R1 through C-R4, build the concrete evidence shape named above. This is the hands-on part: not "argue for the conjecture" but "construct the case that would refute it and see if you can."
+
+- C-R1: side-by-side comparison of three operations under three workflow regimes.
+- C-R2: catalog 4-6 candidate domains, test whether the proposed shared property discriminates.
+- C-R3: identify the host-substrate richness criterion, test against 4-6 systems.
+- C-R4: build the design-space matrix.
+
+Each refutation harness is its own org file with its own CPRR table.
+
+** L3 — Synthesis
+
+Only if at least two of the four conjectures survive refutation. The synthesis is a single org file that:
+
+1. States which conjectures survived and which didn't.
+2. Names the formal property that ties the survivors together (or explicitly says no such property emerged).
+3. Proposes specific refinements to the working discipline, with refutation conditions for each.
+4. Notes which refinements are phase-2 vs phase-3.
+
+If fewer than two conjectures survive, the synthesis is shorter: state what didn't hold, document the closing arguments, and recommend the team move on. The negative result is published as an ADR so the next person tempted by the analogy can read why it didn't pan out.
+
+* Three refinements pre-named for evaluation
+
+** R1 — Trailer as canonical source, notes as derived view
+
+*Current state*: commit trailer carries Trace-Id + Conjecture + Refutation; notes refs carry richer per-dimension data.
+
+*Proposed refinement*: trailer is the canonical source; notes refs are mechanically derived from trailer content + experiment outputs. ~git commit~ writes the trailer; a post-commit hook populates the matching notes refs.
+
+*Earns implementation iff*: C-R3 survives (host substrate is rich enough to be its own meta-layer).
+
+*Refutation for the refinement itself*: if maintaining the derived notes from trailers introduces more friction than maintaining them directly, the refinement fails its own cost-benefit.
+
+** R2 — Substrate-level enforcement via git pre-receive hooks
+
+*Current state*: CI catches trailer absence, claim ref violations, schema breaks after the fact.
+
+*Proposed refinement*: a pre-receive hook on the central remote refuses pushes that violate any of: trailer presence, notes schema validity, claim ref attribution. Substrate-level rejection rather than CI failure.
+
+*Earns implementation iff*: C-R2 survives (eye-of-the-needle as a substrate-edge enforcement primitive).
+
+*Refutation for the refinement itself*: pre-receive hooks have known operational costs (hard to update, hard to bypass in emergencies, fail-open vs fail-closed semantics). If the operational costs exceed the integrity gains, the refinement fails even if C-R2 holds.
+
+** R3 — Eye-of-the-needle as a named architectural pattern
+
+*Current state*: trace-id discipline is a CI obligation in the trace-spine spec; not a named pattern reusable across other workflow concerns.
+
+*Proposed refinement*: extract the pattern into a named ADR and refer to it explicitly when designing future workflow primitives.
+
+*Earns implementation iff*: C-R2 and C-R4 both survive.
+
+*Refutation for the refinement itself*: if the pattern statement is so general it absorbs every API boundary, naming it adds nothing.
+
+* Repo layout
+
+| Path                                                              | Purpose                            |
+|-------------------------------------------------------------------+------------------------------------|
+| [[file:README.org][README.org]]                                   | this spec                          |
+| [[file:terra-rules.org][terra-rules.org]]                         | L0: Terra rule extraction          |
+| [[file:discipline-rules.org][discipline-rules.org]]               | L0: working discipline rule extraction |
+| [[file:correspondence.org][correspondence.org]]                   | L1: side-by-side mapping           |
+| [[file:refutation-c-r1-co-design.org][refutation-c-r1-co-design.org]]         | L2: co-design harness    |
+| [[file:refutation-c-r2-narrow-channel.org][refutation-c-r2-narrow-channel.org]] | L2: narrow channel harness |
+| [[file:refutation-c-r3-meta-substrate.org][refutation-c-r3-meta-substrate.org]] | L2: meta-substrate harness |
+| [[file:refutation-c-r4-tiny-core.org][refutation-c-r4-tiny-core.org]]         | L2: tiny core harness    |
+| [[file:synthesis.org][synthesis.org]]                             | L3: only if >= 2 conjectures survive |
+| [[file:sources/devito-hanrahan-2015.bib][sources/devito-hanrahan-2015.bib]]   | BibTeX citation          |
+| [[file:sources/terra-paper-summary.org][sources/terra-paper-summary.org]]     | structured summary       |
+| [[file:sources/working-discipline-corpus.org][sources/working-discipline-corpus.org]] | links to spec + prompts + skills |
+
+* Outcomes
+
+** Outcome A — Strong positive
+
+At least three of four conjectures survive refutation. The shared property is formally statable. At least two of the three pre-named refinements earn implementation.
+
+*Action*: phase-2 ADRs for the surviving refinements. Synthesis potentially worth submitting as a position paper to a SNAPL-style venue.
+
+** Outcome B — Weak positive
+
+One or two conjectures survive. The shared property is unclear.
+
+*Action*: phase-2 ADRs for whichever refinements earn it. No external publication. Synthesis is internal documentation.
+
+** Outcome C — Negative
+
+Zero or one conjecture survives. The analogy is mostly aesthetic.
+
+*Action*: write ADR-research-001 documenting which conjectures failed and why. No refinements ship.
+
+The research budget is bounded; if after L0 + L1 the investigator estimates Outcome C is likely, the work stops at L1 and ADR-research-001 captures the L1 findings as the closing argument.
+
+* CPRR table for the research itself
+
+| C-id  | Conjecture                                                | Refutation condition                                | Action on refutation                              |
+|-------+-----------------------------------------------------------+-----------------------------------------------------+---------------------------------------------------|
+| C-M1  | The structural parallel is rich enough to extract refinements | At least 2 of 4 conjectures fail refutation        | Outcome B or C; reduced phase-2 commitment        |
+| C-M2  | The research can be completed in bounded effort           | L0 + L1 takes > 8 hours of investigator time        | Scope cut: drop L2 for weakest conjecture         |
+| C-M3  | The artifact is self-contained for future readers         | A reader who has not read Terra paper cannot understand the synthesis | Add Terra summary inline                         |
+| C-M4  | Adversary-constructed refutations are stronger than investigator-proposed ones | Investigator's own proposed refutations consistently rejected by adversary | Re-do refutations with adversary in lead         |
+| C-M5  | The research does not become Terra evangelism             | Synthesis advocates implementing Terra-shaped systems beyond the workflow refinements | Spec-keeper rejects synthesis; investigator rewrites |
+
+* Refutation conditions for the research spec itself
+
+- /R1/ — The four conjectures are not independent (C-R3 and C-R4 co-vary).
+- /R2/ — The "refutation harness" framing forces a Popperian shape onto an interpretive question.
+- /R3/ — Research-investigator bias toward positive result.
+- /R4/ — The research could be a procrastination shield against phase-1 work.
+- /R5/ — The synthesis-as-paper outcome biases the research.
+
+* Acceptance criteria
+
+- [ ] L0 rule extractions for both sources committed
+- [ ] L1 correspondence map committed including asymmetries
+- [ ] L2 refutation harness completed for each of C-R1 through C-R4
+- [ ] Synthesis OR negative-result ADR drafted, depending on outcome
+- [ ] Each of the three pre-named refinements has a clear earn/decline decision
+- [ ] CPRR table reflects findings
+- [ ] Total investigator time logged
+- [ ] Adversary agent's contributions logged and attributed
