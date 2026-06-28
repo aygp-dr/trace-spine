@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+#
+# bin/setup-toolchain — Idempotent install of the trace-spine dev toolchain.
+#
+# Primary service language is Clojure/ClojureScript. Spec files are org-mode.
+# This script installs (only what is missing):
+#
+#   - emacs-nox           # org-mode batch validation
+#   - rlwrap              # REPL ergonomics
+#   - clojure (apt)       # Clojure 1.11.x runtime
+#   - babashka (bb)       # Clojure scripting and project automation
+#
+# Existing pre-installed tools we rely on:
+#
+#   - openjdk-21          # JVM for Clojure
+#   - node + npm          # ClojureScript via shadow-cljs (installed per-project)
+#
+# Known proxy-blocked hosts (egress policy denies CONNECT):
+#
+#   - download.clojure.org   official `clj` CLI installer
+#   - repo.clojars.org       community Clojure libraries
+#
+# Apt's clojure package and babashka cover everything that does not require
+# pulling artifacts from Clojars. Request additional hosts via the environment
+# network policy if a deps.edn project needs Clojars.
+#
+# Usage: bin/setup-toolchain [--check]
+#
+#   --check   Verify the toolchain is present; do not install. Exits non-zero
+#             if anything is missing.
+
+set -euo pipefail
+
+CHECK_ONLY=0
+[[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
+
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+ok()   { printf "${GREEN}OK${NC}    %s\n" "$1"; }
+miss() { printf "${YELLOW}MISS${NC}  %s\n" "$1"; }
+fail() { printf "${RED}FAIL${NC}  %s\n" "$1" >&2; }
+
+MISSING=0
+
+need() {
+  local name="$1" probe="$2"
+  if eval "$probe" >/dev/null 2>&1; then
+    ok "$name"
+    return 0
+  fi
+  miss "$name"
+  MISSING=$((MISSING + 1))
+  return 1
+}
+
+want_sudo() {
+  if [[ $EUID -eq 0 ]]; then printf ""; else printf "sudo "; fi
+}
+
+apt_install() {
+  local pkg="$1"
+  if [[ $CHECK_ONLY -eq 1 ]]; then return 0; fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    fail "apt-get not available; cannot install $pkg"
+    return 1
+  fi
+  printf "Installing %s via apt...\n" "$pkg"
+  DEBIAN_FRONTEND=noninteractive $(want_sudo)apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive $(want_sudo)apt-get install -y --no-install-recommends "$pkg"
+}
+
+install_babashka() {
+  if [[ $CHECK_ONLY -eq 1 ]]; then return 0; fi
+  local version="${BABASHKA_VERSION:-1.12.218}"
+  local url="https://github.com/babashka/babashka/releases/download/v${version}/babashka-${version}-linux-amd64-static.tar.gz"
+  local tmp
+  tmp=$(mktemp -d)
+  trap "rm -rf $tmp" RETURN
+  printf "Installing babashka v%s...\n" "$version"
+  curl -fsSL "$url" -o "$tmp/bb.tar.gz"
+  tar -xzf "$tmp/bb.tar.gz" -C "$tmp"
+  $(want_sudo)install -m 0755 "$tmp/bb" /usr/local/bin/bb
+}
+
+main() {
+  printf "=== trace-spine toolchain ===\n"
+  printf "Mode: %s\n\n" "$([[ $CHECK_ONLY -eq 1 ]] && echo check || echo install)"
+
+  # Pre-installed, just verify.
+  need "java (>=21)"  "java -version 2>&1 | grep -qE 'version \"(2[1-9]|[3-9][0-9])'"
+  need "node (>=20)"  "node --version | grep -qE '^v(2[0-9]|[3-9][0-9])'"
+  need "npm"          "npm --version"
+  need "curl"         "command -v curl"
+  need "git"          "command -v git"
+
+  # Installable.
+  if ! need "emacs (>=29)" "emacs --version 2>&1 | grep -qE 'GNU Emacs (29|[3-9][0-9])'"; then
+    [[ $CHECK_ONLY -eq 1 ]] || apt_install emacs-nox
+  fi
+
+  if ! need "rlwrap" "command -v rlwrap"; then
+    [[ $CHECK_ONLY -eq 1 ]] || apt_install rlwrap
+  fi
+
+  if ! need "clojure" "clojure -e '(println (clojure-version))' >/dev/null 2>&1"; then
+    [[ $CHECK_ONLY -eq 1 ]] || apt_install clojure
+  fi
+
+  if ! need "babashka" "command -v bb"; then
+    [[ $CHECK_ONLY -eq 1 ]] || install_babashka
+  fi
+
+  printf "\n"
+  if [[ $CHECK_ONLY -eq 1 ]]; then
+    if [[ $MISSING -eq 0 ]]; then
+      ok "all required tools present"
+      exit 0
+    fi
+    fail "$MISSING tool(s) missing — run bin/setup-toolchain to install"
+    exit 1
+  fi
+
+  # Post-install verification.
+  bin/setup-toolchain --check
+}
+
+cd "$(git rev-parse --show-toplevel 2>/dev/null || dirname "$(dirname "$(readlink -f "$0")")")"
+main "$@"

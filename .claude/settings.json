@@ -15,6 +15,10 @@
       {
         "hooks": [
           {
+            "command": "bin/setup-toolchain --check >/dev/null 2>&1 || bin/setup-toolchain",
+            "type": "command"
+          },
+          {
             "command": "bd prime",
             "type": "command"
           }

@@ -1,0 +1,74 @@
+#+TITLE: trace-spine Toolchain
+#+AUTHOR: spine-engineer
+#+DATE: 2026-06-28
+
+* Charter
+
+The primary service language for trace-spine adapters and the conformance
+harness is *Clojure / ClojureScript*. The spec layer is *org-mode*. The C4
+diagram layer is *Mermaid*. This document captures what is installed on the
+remote-execution environment by =bin/setup-toolchain=, what is *blocked* by
+the egress policy, and how to extend the toolchain.
+
+* Installed by =bin/setup-toolchain=
+
+| Tool         | Source       | Used for                                    |
+|--------------+--------------+---------------------------------------------|
+| openjdk-21   | image        | JVM for Clojure                             |
+| node + npm   | image        | ClojureScript via shadow-cljs (per project) |
+| curl, git    | image        | network, VCS                                |
+| emacs-nox    | apt          | =org-lint= comprehensive batch validation   |
+| rlwrap       | apt          | REPL line editing                           |
+| clojure      | apt (1.11.1) | Clojure runtime                             |
+| babashka     | GitHub bin   | scripts, project automation, fast startup   |
+
+Run idempotently:
+
+#+begin_src bash
+bin/setup-toolchain          # install anything missing
+bin/setup-toolchain --check  # verify only; exits non-zero if missing
+#+end_src
+
+The script is wired into the Claude Code =SessionStart= hook
+(=.claude/settings.json=) so a freshly-cloned web session re-installs the
+toolchain automatically before any work begins.
+
+* Blocked by egress policy
+
+Two hosts return 403 at the agent proxy and *cannot* be reached without a
+policy change:
+
+| Host                  | What it serves                          | Impact                              |
+|-----------------------+-----------------------------------------+-------------------------------------|
+| download.clojure.org  | Official =clj= / =clojure= CLI install  | Use apt =clojure= (1.11.1) instead  |
+| repo.clojars.org      | Community Clojure libraries             | deps.edn with Clojars artifacts fails |
+
+Workarounds in place:
+
+- The apt =clojure= package gives us a working Clojure 1.11.1 invoked as
+  =clojure -e ...=. It lacks the deps.edn-aware =clj= CLI but is sufficient
+  for running Clojure code and basic harness needs.
+- Babashka covers project scripts, test runners, and conformance helpers
+  with sub-second startup and ships statically — no Clojars dependency.
+
+If a future adapter genuinely needs a Clojars artifact, request a
+network-policy exemption for =repo.clojars.org= and =download.clojure.org=
+when creating the environment, then switch the install to the official
+installer (which also handles tools.build for releases).
+
+* Maven Central is allowed
+
+=repo1.maven.org= is reachable. The core Clojure artifact and most of the
+=org.clojure/*= ecosystem (core.async, data.json, tools.cli, spec.alpha)
+ship there, so deps.edn projects that stick to that scope work today.
+
+* Adding a tool
+
+1. Add an install path to =bin/setup-toolchain= behind an idempotent
+   =need ... || install ...= check.
+2. Verify =bin/setup-toolchain --check= still exits zero on a fresh run.
+3. Record the addition in the table above with the artifact source.
+
+Do not silently rely on tools the script does not install — every web
+session starts from a fresh container, and the SessionStart hook is the
+only thing that guarantees presence.
