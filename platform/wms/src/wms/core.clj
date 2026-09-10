@@ -100,13 +100,13 @@
                                      :warehouse-id warehouse-id
                                      :trace-id (:trace-id ctx)})
       (jdbc/execute-one! db-spec
-        (hsql/format
-          {:select [:sku :warehouse_id :on_hand :reserved :available
-                    :reorder_point :reorder_quantity :updated_at]
-           :from [:inventory]
-           :where [:and
-                   [:= :sku sku]
-                   [:= :warehouse_id warehouse-id]]})))
+                         (hsql/format
+                          {:select [:sku :warehouse_id :on_hand :reserved :available
+                                    :reorder_point :reorder_quantity :updated_at]
+                           :from [:inventory]
+                           :where [:and
+                                   [:= :sku sku]
+                                   [:= :warehouse_id warehouse-id]]})))
 
     (adjust-inventory [_ adjustment ctx]
       (let [{:keys [sku warehouse-id adjustment-type quantity reason reference-id]} adjustment
@@ -120,12 +120,12 @@
         (jdbc/with-transaction [tx db-spec]
           ;; Get current inventory
           (let [current (jdbc/execute-one! tx
-                          (hsql/format
-                            {:select [:on_hand]
-                             :from [:inventory]
-                             :where [:and [:= :sku sku]
-                                         [:= :warehouse_id warehouse-id]]
-                             :for :update}))
+                                           (hsql/format
+                                            {:select [:on_hand]
+                                             :from [:inventory]
+                                             :where [:and [:= :sku sku]
+                                                     [:= :warehouse_id warehouse-id]]
+                                             :for :update}))
                 previous-on-hand (or (:inventory/on_hand current) 0)
                 delta (case adjustment-type
                         "receiving" quantity
@@ -136,27 +136,27 @@
                 new-on-hand (+ previous-on-hand delta)]
             ;; Update inventory
             (jdbc/execute-one! tx
-              (hsql/format
-                {:insert-into :inventory
-                 :values [{:sku sku
-                           :warehouse_id warehouse-id
-                           :on_hand new-on-hand
-                           :updated_at [:now]}]
-                 :on-conflict [:sku :warehouse_id]
-                 :do-update-set {:on_hand :excluded.on_hand
-                                 :updated_at :excluded.updated_at}}))
+                               (hsql/format
+                                {:insert-into :inventory
+                                 :values [{:sku sku
+                                           :warehouse_id warehouse-id
+                                           :on_hand new-on-hand
+                                           :updated_at [:now]}]
+                                 :on-conflict [:sku :warehouse_id]
+                                 :do-update-set {:on_hand :excluded.on_hand
+                                                 :updated_at :excluded.updated_at}}))
             ;; Record adjustment
             (sql/insert! tx :inventory_adjustments
-              {:adjustment_id adjustment-id
-               :sku sku
-               :warehouse_id warehouse-id
-               :adjustment_type adjustment-type
-               :quantity quantity
-               :reason reason
-               :reference_id reference-id
-               :previous_on_hand previous-on-hand
-               :new_on_hand new-on-hand
-               :traceparent traceparent})
+                         {:adjustment_id adjustment-id
+                          :sku sku
+                          :warehouse_id warehouse-id
+                          :adjustment_type adjustment-type
+                          :quantity quantity
+                          :reason reason
+                          :reference_id reference-id
+                          :previous_on_hand previous-on-hand
+                          :new_on_hand new-on-hand
+                          :traceparent traceparent})
             {:adjustment-id adjustment-id
              :sku sku
              :previous-on-hand previous-on-hand
@@ -173,10 +173,10 @@
         (jdbc/with-transaction [tx db-spec]
           ;; Check if reservation already exists (idempotency)
           (let [existing (jdbc/execute-one! tx
-                           (hsql/format
-                             {:select [:reservation_id :status]
-                              :from [:reservations]
-                              :where [:= :reservation_id reservation-id]}))]
+                                            (hsql/format
+                                             {:select [:reservation_id :status]
+                                              :from [:reservations]
+                                              :where [:= :reservation_id reservation-id]}))]
             (if existing
               ;; Return existing reservation
               {:reservation-id reservation-id
@@ -185,25 +185,25 @@
               ;; Create new reservation
               (let [results (for [{:keys [sku quantity]} items]
                               (let [inv (jdbc/execute-one! tx
-                                          (hsql/format
-                                            {:select [:available]
-                                             :from [:inventory]
-                                             :where [:and
-                                                     [:= :sku sku]
-                                                     [:= :warehouse_id warehouse-id]]
-                                             :for :update}))
+                                                           (hsql/format
+                                                            {:select [:available]
+                                                             :from [:inventory]
+                                                             :where [:and
+                                                                     [:= :sku sku]
+                                                                     [:= :warehouse_id warehouse-id]]
+                                                             :for :update}))
                                     available (or (:inventory/available inv) 0)
                                     can-reserve? (>= available quantity)]
                                 (when can-reserve?
                                   ;; Increment reserved count
                                   (jdbc/execute-one! tx
-                                    (hsql/format
-                                      {:update :inventory
-                                       :set {:reserved [:+ :reserved quantity]
-                                             :updated_at [:now]}
-                                       :where [:and
-                                               [:= :sku sku]
-                                               [:= :warehouse_id warehouse-id]]})))
+                                                     (hsql/format
+                                                      {:update :inventory
+                                                       :set {:reserved [:+ :reserved quantity]
+                                                             :updated_at [:now]}
+                                                       :where [:and
+                                                               [:= :sku sku]
+                                                               [:= :warehouse_id warehouse-id]]})))
                                 {:sku sku
                                  :quantity quantity
                                  :status (if can-reserve? "reserved" "insufficient")}))
@@ -211,18 +211,18 @@
                     status (if all-reserved? "confirmed" "partial")]
                 ;; Insert reservation record
                 (sql/insert! tx :reservations
-                  {:reservation_id reservation-id
-                   :order_id order-id
-                   :warehouse_id warehouse-id
-                   :status status
-                   :expires_at expires-at
-                   :traceparent traceparent})
+                             {:reservation_id reservation-id
+                              :order_id order-id
+                              :warehouse_id warehouse-id
+                              :status status
+                              :expires_at expires-at
+                              :traceparent traceparent})
                 ;; Insert reservation items
                 (doseq [{:keys [sku quantity]} items]
                   (sql/insert! tx :reservation_items
-                    {:reservation_id reservation-id
-                     :sku sku
-                     :quantity quantity}))
+                               {:reservation_id reservation-id
+                                :sku sku
+                                :quantity quantity}))
                 {:reservation-id reservation-id
                  :status status
                  :items results
@@ -234,27 +234,27 @@
       (jdbc/with-transaction [tx db-spec]
         ;; Get reservation items
         (let [items (jdbc/execute! tx
-                      (hsql/format
-                        {:select [:ri.sku :ri.quantity :r.warehouse_id]
-                         :from [[:reservation_items :ri]]
-                         :join [[:reservations :r] [:= :ri.reservation_id :r.reservation_id]]
-                         :where [:= :ri.reservation_id reservation-id]}))]
+                                   (hsql/format
+                                    {:select [:ri.sku :ri.quantity :r.warehouse_id]
+                                     :from [[:reservation_items :ri]]
+                                     :join [[:reservations :r] [:= :ri.reservation_id :r.reservation_id]]
+                                     :where [:= :ri.reservation_id reservation-id]}))]
           ;; Release reserved quantities
           (doseq [{:keys [sku quantity warehouse_id]} items]
             (jdbc/execute-one! tx
-              (hsql/format
-                {:update :inventory
-                 :set {:reserved [:- :reserved quantity]
-                       :updated_at [:now]}
-                 :where [:and
-                         [:= :sku sku]
-                         [:= :warehouse_id warehouse_id]]})))
+                               (hsql/format
+                                {:update :inventory
+                                 :set {:reserved [:- :reserved quantity]
+                                       :updated_at [:now]}
+                                 :where [:and
+                                         [:= :sku sku]
+                                         [:= :warehouse_id warehouse_id]]})))
           ;; Update reservation status
           (jdbc/execute-one! tx
-            (hsql/format
-              {:update :reservations
-               :set {:status "released"}
-               :where [:= :reservation_id reservation-id]}))
+                             (hsql/format
+                              {:update :reservations
+                               :set {:status "released"}
+                               :where [:= :reservation_id reservation-id]}))
           {:reservation-id reservation-id
            :status "released"
            :items-released (count items)})))
@@ -265,12 +265,12 @@
                                           :trace-id (:trace-id ctx)})
       (let [results (for [{:keys [sku quantity]} items]
                       (let [inv (jdbc/execute-one! db-spec
-                                  (hsql/format
-                                    {:select [:available]
-                                     :from [:inventory]
-                                     :where [:and
-                                             [:= :sku sku]
-                                             [:= :warehouse_id warehouse-id]]}))
+                                                   (hsql/format
+                                                    {:select [:available]
+                                                     :from [:inventory]
+                                                     :where [:and
+                                                             [:= :sku sku]
+                                                             [:= :warehouse_id warehouse-id]]}))
                             available (or (:inventory/available inv) 0)]
                         {:sku sku
                          :requested quantity
@@ -303,8 +303,8 @@
   [db-spec items shipping-address]
   ;; In production: proximity scoring, inventory levels, shipping costs
   (let [warehouses (jdbc/execute! db-spec
-                     (hsql/format {:select-distinct [:warehouse_id]
-                                   :from [:inventory]}))]
+                                  (hsql/format {:select-distinct [:warehouse_id]
+                                                :from [:inventory]}))]
     ;; Return first warehouse (simplified)
     (-> warehouses first :inventory/warehouse_id)))
 
@@ -330,12 +330,12 @@
           ;; Reserve stock
           (let [reservation-id (str "RES-" order-id "-001")
                 reservation-result (reserve-stock inventory-mgr
-                                     {:reservation-id reservation-id
-                                      :order-id order-id
-                                      :items items
-                                      :warehouse-id warehouse-id
-                                      :expires-at (java.time.Instant/now)}
-                                     child-ctx)]
+                                                  {:reservation-id reservation-id
+                                                   :order-id order-id
+                                                   :items items
+                                                   :warehouse-id warehouse-id
+                                                   :expires-at (java.time.Instant/now)}
+                                                  child-ctx)]
 
             (when (not= "confirmed" (:status reservation-result))
               (throw (ex-info "Failed to reserve inventory"
@@ -344,11 +344,11 @@
 
             ;; Create allocation
             (sql/insert! tx :allocations
-              {:allocation_id allocation-id
-               :order_id order-id
-               :warehouse_id warehouse-id
-               :status "allocated"
-               :traceparent traceparent})
+                         {:allocation_id allocation-id
+                          :order_id order-id
+                          :warehouse_id warehouse-id
+                          :status "allocated"
+                          :traceparent traceparent})
 
             ;; Create allocation items with bin locations
             (doseq [{:keys [sku quantity]} items]
@@ -356,46 +356,46 @@
                                   (format "%02d" (rand-int 50)) "-"
                                   (rand-int 5))]
                 (sql/insert! tx :allocation_items
-                  {:allocation_id allocation-id
-                   :sku sku
-                   :quantity quantity
-                   :location location
-                   :status "pending"})))
+                             {:allocation_id allocation-id
+                              :sku sku
+                              :quantity quantity
+                              :location location
+                              :status "pending"})))
 
             ;; Create fulfillment
             (sql/insert! tx :fulfillments
-              {:fulfillment_id fulfillment-id
-               :order_id order-id
-               :allocation_id allocation-id
-               :warehouse_id warehouse-id
-               :status "pending"
-               :traceparent traceparent})
+                         {:fulfillment_id fulfillment-id
+                          :order_id order-id
+                          :allocation_id allocation-id
+                          :warehouse_id warehouse-id
+                          :status "pending"
+                          :traceparent traceparent})
 
             ;; Create fulfillment items
             (doseq [{:keys [sku quantity]} items]
               (sql/insert! tx :fulfillment_items
-                {:fulfillment_id fulfillment-id
-                 :sku sku
-                 :quantity quantity
-                 :status "pending"}))
+                           {:fulfillment_id fulfillment-id
+                            :sku sku
+                            :quantity quantity
+                            :status "pending"}))
 
             ;; Record timeline entry
             (sql/insert! tx :fulfillment_timeline
-              {:fulfillment_id fulfillment-id
-               :status "pending"
-               :occurred_at (java.time.Instant/now)})
+                         {:fulfillment_id fulfillment-id
+                          :status "pending"
+                          :occurred_at (java.time.Instant/now)})
 
             ;; Write to outbox for event publication
             (outbox-fn tx
-              {:event-type "fulfillment.allocated"
-               :aggregate-id allocation-id
-               :payload {:fulfillment-id fulfillment-id
-                         :order-id order-id
-                         :allocation-id allocation-id
-                         :warehouse-id warehouse-id
-                         :items items
-                         :allocated-at (java.time.Instant/now)}
-               :traceparent traceparent})
+                       {:event-type "fulfillment.allocated"
+                        :aggregate-id allocation-id
+                        :payload {:fulfillment-id fulfillment-id
+                                  :order-id order-id
+                                  :allocation-id allocation-id
+                                  :warehouse-id warehouse-id
+                                  :items items
+                                  :allocated-at (java.time.Instant/now)}
+                        :traceparent traceparent})
 
             {:allocation-id allocation-id
              :order-id order-id
@@ -409,16 +409,16 @@
       (log/debug "Getting allocation" {:allocation-id allocation-id
                                        :trace-id (:trace-id ctx)})
       (let [allocation (jdbc/execute-one! db-spec
-                         (hsql/format
-                           {:select [:allocation_id :order_id :warehouse_id
-                                     :status :created_at :traceparent]
-                            :from [:allocations]
-                            :where [:= :allocation_id allocation-id]}))
+                                          (hsql/format
+                                           {:select [:allocation_id :order_id :warehouse_id
+                                                     :status :created_at :traceparent]
+                                            :from [:allocations]
+                                            :where [:= :allocation_id allocation-id]}))
             items (jdbc/execute! db-spec
-                    (hsql/format
-                      {:select [:sku :quantity :location :status]
-                       :from [:allocation_items]
-                       :where [:= :allocation_id allocation-id]}))]
+                                 (hsql/format
+                                  {:select [:sku :quantity :location :status]
+                                   :from [:allocation_items]
+                                   :where [:= :allocation_id allocation-id]}))]
         (when allocation
           (assoc allocation :items items))))
 
@@ -428,20 +428,20 @@
       (jdbc/with-transaction [tx db-spec]
         ;; Get order info for reservation release
         (let [allocation (jdbc/execute-one! tx
-                           (hsql/format
-                             {:select [:order_id :warehouse_id]
-                              :from [:allocations]
-                              :where [:= :allocation_id allocation-id]}))]
+                                            (hsql/format
+                                             {:select [:order_id :warehouse_id]
+                                              :from [:allocations]
+                                              :where [:= :allocation_id allocation-id]}))]
           (when allocation
             ;; Release reservation
             (let [reservation-id (str "RES-" (:allocations/order_id allocation) "-001")]
               (release-reservation inventory-mgr reservation-id ctx))
             ;; Update allocation status
             (jdbc/execute-one! tx
-              (hsql/format
-                {:update :allocations
-                 :set {:status "cancelled"}
-                 :where [:= :allocation_id allocation-id]}))
+                               (hsql/format
+                                {:update :allocations
+                                 :set {:status "cancelled"}
+                                 :where [:= :allocation_id allocation-id]}))
             {:allocation-id allocation-id
              :status "cancelled"}))))))
 
@@ -481,11 +481,11 @@
 
     (try
       (allocate-order allocator
-        {:order-id (:order_id order)
-         :items (:items order)
-         :shipping-address (:shipping_address order)
-         :shipping-method (:shipping_method order)}
-        ctx)
+                      {:order-id (:order_id order)
+                       :items (:items order)
+                       :shipping-address (:shipping_address order)
+                       :shipping-method (:shipping_method order)}
+                      ctx)
       (catch Exception e
         (log/error e "Failed to allocate order" {:order-id (:order_id order)
                                                  :trace-id (:trace-id ctx)})
@@ -505,12 +505,12 @@
 
     ;; Find and cancel allocation
     (let [allocation (jdbc/execute-one! db-spec
-                       (hsql/format
-                         {:select [:allocation_id]
-                          :from [:allocations]
-                          :where [:and
-                                  [:= :order_id order-id]
-                                  [:!= :status "cancelled"]]}))]
+                                        (hsql/format
+                                         {:select [:allocation_id]
+                                          :from [:allocations]
+                                          :where [:and
+                                                  [:= :order_id order-id]
+                                                  [:!= :status "cancelled"]]}))]
       (when allocation
         (cancel-allocation allocator (:allocations/allocation_id allocation) ctx)))))
 
@@ -548,25 +548,25 @@
    This ensures event is published atomically with state changes."
   [tx {:keys [event-type aggregate-id payload traceparent tracestate]}]
   (sql/insert! tx :outbox
-    {:id (java.util.UUID/randomUUID)
-     :aggregate_id aggregate-id
-     :event_type event-type
-     :payload (json/write-value-as-string payload)
-     :traceparent traceparent
-     :tracestate tracestate}))
+               {:id (java.util.UUID/randomUUID)
+                :aggregate_id aggregate-id
+                :event_type event-type
+                :payload (json/write-value-as-string payload)
+                :traceparent traceparent
+                :tracestate tracestate}))
 
 (defn drain-outbox
   "Drain outbox table, publishing events to Kafka.
    Run this periodically or on transaction commit."
   [db-spec kafka-producer]
   (let [pending (jdbc/execute! db-spec
-                  (hsql/format
-                    {:select [:id :aggregate_id :event_type :payload
-                              :traceparent :tracestate :created_at]
-                     :from [:outbox]
-                     :where [:= :published_at nil]
-                     :order-by [:created_at]
-                     :limit 100}))]
+                               (hsql/format
+                                {:select [:id :aggregate_id :event_type :payload
+                                          :traceparent :tracestate :created_at]
+                                 :from [:outbox]
+                                 :where [:= :published_at nil]
+                                 :order-by [:created_at]
+                                 :limit 100}))]
     (doseq [event pending]
       (let [topic (case (:outbox/event_type event)
                     "fulfillment.allocated" "fulfillment.allocated"
@@ -582,10 +582,10 @@
         ;; In production: kafka/send! with headers
         ;; Mark as published
         (jdbc/execute-one! db-spec
-          (hsql/format
-            {:update :outbox
-             :set {:published_at [:now]}
-             :where [:= :id (:outbox/id event)]}))))
+                           (hsql/format
+                            {:update :outbox
+                             :set {:published_at [:now]}
+                             :where [:= :id (:outbox/id event)]}))))
     (count pending)))
 
 ;; -----------------------------------------------------------------------------
@@ -632,7 +632,7 @@
    :version "1.0.0"
    :dependencies {:postgres (try
                               (jdbc/execute-one! db-spec
-                                ["SELECT 1"])
+                                                 ["SELECT 1"])
                               "ok"
                               (catch Exception _ "error"))
                   :kafka "ok"  ; Would check actual connection

@@ -522,8 +522,7 @@
                  :post rules-create-handler}]
       ["/blocklist/:type" {:post blocklist-add-handler}]
       ["/blocklist/:type/:value" {:delete blocklist-remove-handler}]]])
-   (ring/create-default-handler))
-  )
+   (ring/create-default-handler)))
 
 (def wrapped-app
   (-> app
@@ -580,5 +579,4 @@
     :billing_address {:country "US" :postal_code "94102"}
     :payment_method {:type "card" :bin "424242" :last_four "4242"}
     :metadata {:channel "web" :session_duration_ms 45000}}
-   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-  )
+   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"))

@@ -249,7 +249,7 @@
   [{:keys [query-params trace-context] :as _request}]
   ;; TODO: Forward to Catalog Service with trace context
   (log/info "Listing products" {:trace-id (:trace-id trace-context)
-                                 :params query-params})
+                                :params query-params})
   (response/response
    {:data []
     :pagination {:page 1 :limit 20 :total 0 :total_pages 0}
@@ -260,7 +260,7 @@
   [{:keys [path-params trace-context] :as _request}]
   (let [product-id (:id path-params)]
     (log/info "Getting product" {:trace-id (:trace-id trace-context)
-                                  :product-id product-id})
+                                 :product-id product-id})
     ;; TODO: Forward to Catalog Service
     (response/response
      {:data {:id product-id
@@ -274,7 +274,7 @@
   [{:keys [identity trace-context] :as _request}]
   (let [user-id (:sub identity)]
     (log/info "Getting cart" {:trace-id (:trace-id trace-context)
-                               :user-id user-id})
+                              :user-id user-id})
     ;; TODO: Forward to Cart Service
     (response/response
      {:data {:id (str "cart-" user-id)
@@ -289,8 +289,8 @@
   (let [user-id (:sub identity)
         {:keys [product_id variant_id quantity]} body]
     (log/info "Adding to cart" {:trace-id (:trace-id trace-context)
-                                 :user-id user-id
-                                 :product-id product_id})
+                                :user-id user-id
+                                :product-id product_id})
     ;; TODO: Forward to Cart Service
     (-> (response/response
          {:data {:id (str "cart-" user-id)
@@ -307,7 +307,7 @@
   [{:keys [body identity trace-context] :as _request}]
   (let [user-id (:sub identity)]
     (log/info "Processing checkout" {:trace-id (:trace-id trace-context)
-                                      :user-id user-id})
+                                     :user-id user-id})
     ;; TODO:
     ;; 1. Check fraud score via Fraud Service
     ;; 2. Create order via Order Service
@@ -333,7 +333,7 @@
   ;; - Include trace context in resolvers
   (let [{:keys [query variables operation_name]} body]
     (log/info "GraphQL query" {:trace-id (:trace-id trace-context)
-                                :operation operation_name})
+                               :operation operation_name})
     (response/response
      {:data {}
       :extensions {:tracing {:trace_id (:trace-id trace-context)
@@ -453,5 +453,4 @@
   (jwt/sign {:sub "user-123"
              :roles ["customer"]
              :exp (+ (/ (System/currentTimeMillis) 1000) 3600)}
-            "secret")
-  )
+            "secret"))

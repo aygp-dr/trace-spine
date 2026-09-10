@@ -63,17 +63,17 @@
         start-time (Instant/now)]
     (try
       (log/debug "Starting span" {:span-name span-name
-                                   :trace-id (:trace-id child-ctx)
-                                   :span-id span-id})
+                                  :trace-id (:trace-id child-ctx)
+                                  :span-id span-id})
       (let [result (f child-ctx)]
         (log/debug "Completed span" {:span-name span-name
-                                      :span-id span-id
-                                      :duration-ms (- (.toEpochMilli (Instant/now))
+                                     :span-id span-id
+                                     :duration-ms (- (.toEpochMilli (Instant/now))
                                                      (.toEpochMilli start-time))})
         [result child-ctx])
       (catch Exception e
         (log/error e "Span failed" {:span-name span-name
-                                     :span-id span-id})
+                                    :span-id span-id})
         (throw e)))))
 
 (defn- extract-trace-context
@@ -110,9 +110,9 @@
   "Mark idempotency key as in-progress. Acquires lock."
   [db-spec ctx idempotency-key request-hash]
   (idempotency/mark-in-progress db-spec
-                                 idempotency-key
-                                 request-hash
-                                 (trace/format-traceparent ctx)))
+                                idempotency-key
+                                request-hash
+                                (trace/format-traceparent ctx)))
 
 (defn- mark-idempotency-complete
   "Mark idempotency key as complete with cached response."
@@ -281,7 +281,7 @@
 
         ;; Step 1: Check idempotency
         (let [[idem-result _] (check-idempotency db-spec orchestrate-ctx
-                                                  idempotency-key request-hash)]
+                                                 idempotency-key request-hash)]
           (case (:status idem-result)
             ;; Cached result - return immediately
             :duplicate
@@ -301,7 +301,7 @@
             (if (:retryable? idem-result)
               ;; Allow retry, continue processing
               (mark-idempotency-in-progress db-spec orchestrate-ctx
-                                             idempotency-key request-hash)
+                                            idempotency-key request-hash)
               (throw (ex-info "Previous payment attempt failed permanently"
                               {:type :payment-failed
                                :error (:error idem-result)})))
@@ -310,14 +310,14 @@
             :new
             (do
               (mark-idempotency-in-progress db-spec orchestrate-ctx
-                                             idempotency-key request-hash)
+                                            idempotency-key request-hash)
 
               (try
                 ;; Step 2: Fraud check
                 (let [[fraud-result _] (check-fraud orchestrate-ctx
-                                                     {:customer-id (:customer-id request)
-                                                      :amount (:amount request)
-                                                      :order-id (:order-id request)})]
+                                                    {:customer-id (:customer-id request)
+                                                     :amount (:amount request)
+                                                     :order-id (:order-id request)})]
                   (when (> (:risk-score fraud-result) (:fraud-threshold @config))
                     (let [error {:status :declined
                                  :error-code "fraud_detected"
@@ -329,9 +329,9 @@
                   ;; Step 3: Apply wallet credit
                   (let [wallet-result (when (:apply-wallet-credit request)
                                         (first (apply-wallet-credit
-                                                 orchestrate-ctx
-                                                 (:customer-id request)
-                                                 (:amount request))))
+                                                orchestrate-ctx
+                                                (:customer-id request)
+                                                (:amount request))))
                         wallet-applied (or (:applied wallet-result) 0)
                         remaining-amount (- (:amount request) wallet-applied)]
 
@@ -342,14 +342,14 @@
                                 (throw (ex-info "No payment processor available"
                                                 {:type :service-unavailable})))
                             [charge-result _] (charge-processor
-                                                orchestrate-ctx
-                                                processor
-                                                {:amount remaining-amount
-                                                 :currency (:currency request)
-                                                 :source (:source request)
-                                                 :metadata {:order-id (:order-id request)
-                                                            :traceparent (trace/format-traceparent
-                                                                           orchestrate-ctx)}})]
+                                               orchestrate-ctx
+                                               processor
+                                               {:amount remaining-amount
+                                                :currency (:currency request)
+                                                :source (:source request)
+                                                :metadata {:order-id (:order-id request)
+                                                           :traceparent (trace/format-traceparent
+                                                                         orchestrate-ctx)}})]
 
                         ;; Step 5: Record in DB with outbox (single transaction)
                         (jdbc/with-transaction [tx db-spec]
@@ -377,20 +377,20 @@
 
                             ;; Publish to outbox (same transaction)
                             (publish-payment-event tx orchestrate-ctx
-                                                    "payment.completed"
-                                                    {:payment-id payment-id
-                                                     :order-id (:order-id request)
-                                                     :charge-id (:charge-id charge-result)
-                                                     :amount-cents (:amount request)
-                                                     :processor (name processor)})
+                                                   "payment.completed"
+                                                   {:payment-id payment-id
+                                                    :order-id (:order-id request)
+                                                    :charge-id (:charge-id charge-result)
+                                                    :amount-cents (:amount request)
+                                                    :processor (name processor)})
 
                             ;; Mark idempotency complete
                             (idempotency/mark-complete-in-tx tx idempotency-key result)
 
                             (log/info "Payment completed successfully"
-                                       {:payment-id payment-id
-                                        :charge-id (:charge-id charge-result)
-                                        :trace-id (:trace-id orchestrate-ctx)})
+                                      {:payment-id payment-id
+                                       :charge-id (:charge-id charge-result)
+                                       :trace-id (:trace-id orchestrate-ctx)})
 
                             result)))
 
@@ -408,9 +408,9 @@
                                                 :service-unavailable}
                                               (:type error-data))]
                     (mark-idempotency-failed db-spec idempotency-key
-                                              {:error-code (or (:type error-data) :unknown)
-                                               :error-message (ex-message e)}
-                                              retryable?)
+                                             {:error-code (or (:type error-data) :unknown)
+                                              :error-message (ex-message e)}
+                                             retryable?)
                     (throw e)))))))))))
 
 ;;; ---------------------------------------------------------------------------
@@ -438,38 +438,38 @@
              :headers {"Content-Type" "application/json"
                        "Retry-After" "5"}
              :body (json/write-value-as-string
-                     {:error {:code "conflict"
-                              :message "Payment already in progress"}})}
+                    {:error {:code "conflict"
+                             :message "Payment already in progress"}})}
 
             :programmer-error
             {:status 500
              :headers {"Content-Type" "application/json"}
              :body (json/write-value-as-string
-                     {:error {:code "internal_error"
-                              :message "Trace context required"}})}
+                    {:error {:code "internal_error"
+                             :message "Trace context required"}})}
 
             :service-unavailable
             {:status 503
              :headers {"Content-Type" "application/json"
                        "Retry-After" "60"}
              :body (json/write-value-as-string
-                     {:error {:code "service_unavailable"
-                              :message "No payment processor available"}})}
+                    {:error {:code "service_unavailable"
+                             :message "No payment processor available"}})}
 
             ;; Default error response
             {:status 500
              :headers {"Content-Type" "application/json"}
              :body (json/write-value-as-string
-                     {:error {:code (or (:error-code data) "internal_error")
-                              :message (ex-message e)}})})))
+                    {:error {:code (or (:error-code data) "internal_error")
+                             :message (ex-message e)}})})))
 
       (catch Exception e
         (log/error e "Unexpected error in charge handler")
         {:status 500
          :headers {"Content-Type" "application/json"}
          :body (json/write-value-as-string
-                 {:error {:code "internal_error"
-                          :message "An unexpected error occurred"}})}))))
+                {:error {:code "internal_error"
+                         :message "An unexpected error occurred"}})}))))
 
 (defn health-handler
   "Ring handler for GET /health endpoint."
@@ -484,10 +484,10 @@
       {:status (if db-ok? 200 503)
        :headers {"Content-Type" "application/json"}
        :body (json/write-value-as-string
-               {:status (if db-ok? "healthy" "unhealthy")
-                :database (if db-ok? "connected" "disconnected")
-                :circuits {:stripe stripe-circuit
-                           :paypal paypal-circuit}})})))
+              {:status (if db-ok? "healthy" "unhealthy")
+               :database (if db-ok? "connected" "disconnected")
+               :circuits {:stripe stripe-circuit
+                          :paypal paypal-circuit}})})))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Application Entry Point
@@ -503,8 +503,8 @@
       {:status 404
        :headers {"Content-Type" "application/json"}
        :body (json/write-value-as-string
-               {:error {:code "not_found"
-                        :message "Endpoint not found"}})})))
+              {:error {:code "not_found"
+                       :message "Endpoint not found"}})})))
 
 (defn -main
   "Application entry point."
@@ -527,14 +527,12 @@
 
   ;; Test orchestration (requires running DB)
   #_(orchestrate-payment
-      db-spec
-      {:idempotency-key "test-key-1"
-       :amount 10000
-       :currency "usd"
-       :customer-id "cust_123"
-       :order-id "ord_456"
-       :source "tok_visa"
-       :apply-wallet-credit true}
-      {"traceparent" (trace/format-traceparent test-ctx)})
-
-  )
+     db-spec
+     {:idempotency-key "test-key-1"
+      :amount 10000
+      :currency "usd"
+      :customer-id "cust_123"
+      :order-id "ord_456"
+      :source "tok_visa"
+      :apply-wallet-credit true}
+     {"traceparent" (trace/format-traceparent test-ctx)}))

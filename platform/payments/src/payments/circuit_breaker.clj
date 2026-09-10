@@ -18,12 +18,12 @@
 ;;; ---------------------------------------------------------------------------
 
 (defrecord CircuitState
-  [state              ; :closed, :open, :half-open
-   failure-count      ; Recent failure count
-   success-count      ; Recent success count (for half-open recovery)
-   last-failure-time  ; Instant of last failure
-   opened-at          ; Instant when circuit opened
-   half-open-calls])  ; Number of calls allowed in half-open state
+           [state              ; :closed, :open, :half-open
+            failure-count      ; Recent failure count
+            success-count      ; Recent success count (for half-open recovery)
+            last-failure-time  ; Instant of last failure
+            opened-at          ; Instant when circuit opened
+            half-open-calls])  ; Number of calls allowed in half-open state
 
 (defn- make-closed-state []
   (->CircuitState :closed 0 0 nil nil 0))

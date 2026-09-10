@@ -128,13 +128,13 @@
   ([db-spec] (fetch-unpublished db-spec 100))
   ([db-spec limit]
    (jdbc/execute!
-     db-spec
-     ["SELECT id, aggregate_id, event_type, payload, traceparent, tracestate, created_at, retry_count
+    db-spec
+    ["SELECT id, aggregate_id, event_type, payload, traceparent, tracestate, created_at, retry_count
        FROM outbox
        WHERE published_at IS NULL
        ORDER BY created_at ASC
        LIMIT ?"
-      limit])))
+     limit])))
 
 (defn mark-published
   "Mark events as published.
@@ -161,8 +161,8 @@
   "Move events that have exceeded retry limit to dead letter table."
   [db-spec max-retries]
   (jdbc/execute-one!
-    db-spec
-    ["INSERT INTO outbox_dead_letter
+   db-spec
+   ["INSERT INTO outbox_dead_letter
         (id, aggregate_id, event_type, payload, traceparent, tracestate, created_at, failed_at, retry_count)
       SELECT id, aggregate_id, event_type, payload, traceparent, tracestate, created_at, NOW(), retry_count
       FROM outbox
@@ -170,8 +170,8 @@
 
       DELETE FROM outbox
       WHERE published_at IS NULL AND retry_count >= ?;"
-     max-retries
-     max-retries]))
+    max-retries
+    max-retries]))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Event Types

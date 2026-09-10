@@ -48,15 +48,15 @@
 
     (try
       (let [response (http/request
-                       (merge
-                         {:method method
-                          :url url
-                          :headers headers
-                          :throw-exceptions false
-                          :socket-timeout (:timeout-ms @config)
-                          :connection-timeout 3000
-                          :as :json}
-                         opts))
+                      (merge
+                       {:method method
+                        :url url
+                        :headers headers
+                        :throw-exceptions false
+                        :socket-timeout (:timeout-ms @config)
+                        :connection-timeout 3000
+                        :as :json}
+                       opts))
             status (:status response)
             body (:body response)]
 
@@ -170,10 +170,10 @@
 
   (make-request ctx :post (str "/wallets/" customer-id "/debit")
                 {:body (json/write-value-as-string
-                         {:amount amount
-                          :order_id order-id
-                          :reason (or reason "payment")
-                          :idempotency_key (str "debit-" order-id)})}))
+                        {:amount amount
+                         :order_id order-id
+                         :reason (or reason "payment")
+                         :idempotency_key (str "debit-" order-id)})}))
 
 (defn hold
   "Place a hold on wallet funds (reserve without debiting).
@@ -196,9 +196,9 @@
 
   (make-request ctx :post (str "/wallets/" customer-id "/hold")
                 {:body (json/write-value-as-string
-                         {:amount amount
-                          :order_id order-id
-                          :expires_at expires-at})}))
+                        {:amount amount
+                         :order_id order-id
+                         :expires_at expires-at})}))
 
 (defn capture-hold
   "Convert a hold to a debit.
@@ -255,8 +255,8 @@
                (str "/wallets/" customer-id "/credit"))]
     (make-request ctx :post path
                   {:body (json/write-value-as-string
-                           {:amount amount
-                            :reason reason})})))
+                          {:amount amount
+                           :reason reason})})))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Gift Card Operations
@@ -276,7 +276,7 @@
   [ctx customer-id gift-card-code]
   (make-request ctx :post (str "/wallets/" customer-id "/redeem")
                 {:body (json/write-value-as-string
-                         {:gift_card_code gift-card-code})}))
+                        {:gift_card_code gift-card-code})}))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Admin Operations
@@ -297,8 +297,8 @@
   [ctx customer-id & {:keys [initial-balance]}]
   (make-request ctx :post "/wallets"
                 {:body (json/write-value-as-string
-                         {:customer_id customer-id
-                          :initial_balance (or initial-balance 0)})}))
+                        {:customer_id customer-id
+                         :initial_balance (or initial-balance 0)})}))
 
 (defn freeze-wallet
   "Freeze a wallet (prevent debits).
@@ -313,7 +313,7 @@
   [ctx customer-id reason]
   (make-request ctx :post (str "/wallets/" customer-id "/freeze")
                 {:body (json/write-value-as-string
-                         {:reason reason})}))
+                        {:reason reason})}))
 
 (defn unfreeze-wallet
   "Unfreeze a wallet.

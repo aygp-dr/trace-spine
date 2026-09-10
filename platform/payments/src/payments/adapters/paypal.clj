@@ -55,11 +55,11 @@
            (> @token-expires-at (System/currentTimeMillis)))
     @access-token
     (let [response (http/post
-                     (str (api-base) "/v1/oauth2/token")
-                     {:basic-auth [(:client-id @config)
-                                   (:client-secret @config)]
-                      :form-params {:grant_type "client_credentials"}
-                      :as :json})
+                    (str (api-base) "/v1/oauth2/token")
+                    {:basic-auth [(:client-id @config)
+                                  (:client-secret @config)]
+                     :form-params {:grant_type "client_credentials"}
+                     :as :json})
           body (:body response)
           token (:access_token body)
           expires-in (:expires_in body)]
@@ -83,9 +83,9 @@
   "Retrieve stored trace context for a PayPal order ID."
   [db-spec paypal-order-id]
   (when-let [row (jdbc/execute-one!
-                   db-spec
-                   ["SELECT traceparent FROM paypal_trace_context WHERE paypal_order_id = ?"
-                    paypal-order-id])]
+                  db-spec
+                  ["SELECT traceparent FROM paypal_trace_context WHERE paypal_order_id = ?"
+                   paypal-order-id])]
     (:paypal_trace_context/traceparent row)))
 
 ;;; ---------------------------------------------------------------------------
@@ -105,15 +105,15 @@
 
     (try
       (let [response (http/request
-                       (merge
-                         {:method method
-                          :url url
-                          :headers {"Authorization" (str "Bearer " token)
-                                    "Content-Type" "application/json"}
-                          :throw-exceptions false
-                          :socket-timeout 30000
-                          :connection-timeout 5000}
-                         opts))
+                      (merge
+                       {:method method
+                        :url url
+                        :headers {"Authorization" (str "Bearer " token)
+                                  "Content-Type" "application/json"}
+                        :throw-exceptions false
+                        :socket-timeout 30000
+                        :connection-timeout 5000}
+                       opts))
             status (:status response)
             body (when (:body response)
                    (json/read-value (:body response) json/keyword-keys-object-mapper))]

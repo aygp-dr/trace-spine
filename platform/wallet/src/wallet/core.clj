@@ -177,7 +177,7 @@
      {:builder-fn rs/as-unqualified-maps}))
 
   (get-transactions [_ wallet-id {:keys [limit offset instrument start-date end-date order-id]
-                                   :or {limit 50 offset 0}}]
+                                  :or {limit 50 offset 0}}]
     (let [base-query (-> (h/select :*)
                          (h/from :wallet_transactions)
                          (h/where [:= :wallet_account_id wallet-id])

@@ -39,12 +39,12 @@
   (log/debug "Checking idempotency key" {:key idempotency-key})
 
   (if-let [record (jdbc/execute-one!
-                    db-spec
-                    ["SELECT status, request_hash, response_body, error_data, retryable,
+                   db-spec
+                   ["SELECT status, request_hash, response_body, error_data, retryable,
                              created_at, updated_at
                       FROM idempotency_keys
                       WHERE key = ?"
-                     idempotency-key])]
+                    idempotency-key])]
     (let [status (keyword (:idempotency_keys/status record))
           stored-hash (:idempotency_keys/request_hash record)
           updated-at (:idempotency_keys/updated_at record)]
@@ -67,8 +67,8 @@
 
         :in_progress
         (let [age-seconds (-> (Duration/between
-                                (.toInstant updated-at)
-                                (Instant/now))
+                               (.toInstant updated-at)
+                               (Instant/now))
                               .getSeconds)]
           (if (> age-seconds lock-timeout-seconds)
             ;; Stale lock - allow retry
@@ -96,15 +96,15 @@
   (log/debug "Marking idempotency key in-progress" {:key idempotency-key})
 
   (jdbc/execute-one!
-    db-spec
-    ["INSERT INTO idempotency_keys (key, status, request_hash, traceparent, expires_at)
+   db-spec
+   ["INSERT INTO idempotency_keys (key, status, request_hash, traceparent, expires_at)
       VALUES (?, 'in_progress', ?, ?, NOW() + INTERVAL '24 hours')
       ON CONFLICT (key) DO UPDATE SET
         status = 'in_progress',
         updated_at = NOW()"
-     idempotency-key
-     request-hash
-     traceparent]))
+    idempotency-key
+    request-hash
+    traceparent]))
 
 (defn mark-complete
   "Mark idempotency key as complete with cached response."
@@ -112,14 +112,14 @@
   (log/debug "Marking idempotency key complete" {:key idempotency-key})
 
   (jdbc/execute-one!
-    db-spec
-    ["UPDATE idempotency_keys
+   db-spec
+   ["UPDATE idempotency_keys
       SET status = 'complete',
           response_body = ?::jsonb,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string response)
-     idempotency-key]))
+    (json/write-value-as-string response)
+    idempotency-key]))
 
 (defn mark-complete-in-tx
   "Mark idempotency key as complete within an existing transaction."
@@ -127,14 +127,14 @@
   (log/debug "Marking idempotency key complete (in tx)" {:key idempotency-key})
 
   (jdbc/execute-one!
-    tx
-    ["UPDATE idempotency_keys
+   tx
+   ["UPDATE idempotency_keys
       SET status = 'complete',
           response_body = ?::jsonb,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string response)
-     idempotency-key]))
+    (json/write-value-as-string response)
+    idempotency-key]))
 
 (defn mark-failed
   "Mark idempotency key as failed."
@@ -143,23 +143,23 @@
              {:key idempotency-key :retryable? retryable?})
 
   (jdbc/execute-one!
-    db-spec
-    ["UPDATE idempotency_keys
+   db-spec
+   ["UPDATE idempotency_keys
       SET status = 'failed',
           error_data = ?::jsonb,
           retryable = ?,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string error)
-     retryable?
-     idempotency-key]))
+    (json/write-value-as-string error)
+    retryable?
+    idempotency-key]))
 
 (defn cleanup-expired
   "Remove expired idempotency keys. Call periodically from background job."
   [db-spec]
   (let [result (jdbc/execute-one!
-                 db-spec
-                 ["DELETE FROM idempotency_keys
+                db-spec
+                ["DELETE FROM idempotency_keys
                    WHERE expires_at < NOW()
                    RETURNING COUNT(*) as deleted"])]
     (when (pos? (:deleted result 0))

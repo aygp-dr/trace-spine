@@ -260,7 +260,7 @@
   [flag-key]
   (try
     (wcar (redis-conn)
-      (car/get (redis-key "flags" flag-key)))
+          (car/get (redis-key "flags" flag-key)))
     (catch Exception e
       (log/warn "Redis cache read failed" {:flag-key flag-key :error (.getMessage e)})
       nil)))
@@ -270,7 +270,7 @@
   [flag-key flag-def]
   (try
     (wcar (redis-conn)
-      (car/set (redis-key "flags" flag-key) flag-def))
+          (car/set (redis-key "flags" flag-key) flag-def))
     (catch Exception e
       (log/warn "Redis cache write failed" {:flag-key flag-key :error (.getMessage e)}))))
 
@@ -279,7 +279,7 @@
   [flag-key]
   (try
     (wcar (redis-conn)
-      (car/del (redis-key "flags" flag-key)))
+          (car/del (redis-key "flags" flag-key)))
     (catch Exception e
       (log/warn "Redis cache invalidation failed" {:flag-key flag-key :error (.getMessage e)}))))
 
