@@ -2,7 +2,8 @@
 
  :deps
  {;; Core Clojure
-  org.clojure/clojure {:mvn/version "1.12.0"}
+  org.clojure/clojure {:mvn/version "1.12.6"}
+  org.clojure/spec.alpha {:mvn/version "0.5.238"}
   org.clojure/core.async {:mvn/version "1.6.681"}
 
   ;; trace-spine library (local dep)
@@ -52,21 +53,35 @@
   buddy/buddy-core {:mvn/version "1.11.423"}}
 
  :aliases
- {:dev
+ {;; REPL: clj -M:dev  (dev/user.clj instruments all s/fdef'd fns)
+  :dev
   {:extra-paths ["dev" "test"]
    :extra-deps
-   {integrant/repl {:mvn/version "0.4.0"}
+   {org.clojure/test.check {:mvn/version "1.1.3"}
+    integrant/repl {:mvn/version "0.4.0"}
     ring/ring-mock {:mvn/version "0.4.0"}
     lambdaisland/kaocha {:mvn/version "1.91.1392"}}}
 
+  ;; bb test  ->  clojure -M:test  (kaocha, as before)
   :test
   {:extra-paths ["test"]
    :extra-deps
-   {lambdaisland/kaocha {:mvn/version "1.91.1392"}
+   {org.clojure/test.check {:mvn/version "1.1.3"}
+    lambdaisland/kaocha {:mvn/version "1.91.1392"}
     nubank/matcher-combinators {:mvn/version "3.9.1"}
     io.github.cognitect-labs/test-runner {:git/tag "v0.5.1"
                                           :git/sha "dfb30dd"}}
    :main-opts ["-m" "kaocha.runner"]}
+
+  ;; bb lint  ->  clojure -M:lint --lint src test dev
+  :lint
+  {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.08.04"}}
+   :main-opts ["-m" "clj-kondo.main"]}
+
+  ;; bb fmt / bb fmt:fix  ->  clojure -M:fmt check|fix src test dev
+  :fmt
+  {:replace-deps {dev.weavejester/cljfmt {:mvn/version "0.16.5"}}
+   :main-opts ["-m" "cljfmt.main"]}
 
   :uberjar
   {:extra-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}

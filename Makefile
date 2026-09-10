@@ -3,7 +3,7 @@
 
 .PHONY: all test lint clean repl help
 .PHONY: test-all lint-all build-all clean-all
-.PHONY: c4-check org-lint clj-lint
+.PHONY: c4-check org-lint clj-lint fmt check ci ci-quick
 .PHONY: api wms payments wallet fraud metrics feature-flags
 
 # Default target
@@ -48,18 +48,10 @@ build-all:
 	done
 	@echo "$(GREEN)All services built successfully$(RESET)"
 
-## test-all: Run tests for all services
+## test-all: Run tests for lib/clj and all services (bb test)
 test-all:
-	@echo "$(BOLD)Testing all services...$(RESET)"
-	@failed=0; \
-	for svc in $(SERVICES); do \
-		echo "$(GREEN)Testing $$svc...$(RESET)"; \
-		$(MAKE) -C platform/$$svc test || failed=1; \
-	done; \
-	if [ $$failed -eq 1 ]; then \
-		echo "$(YELLOW)Some tests failed$(RESET)"; \
-		exit 1; \
-	fi
+	@echo "$(BOLD)Testing lib/clj and all services...$(RESET)"
+	@bb test
 	@echo "$(GREEN)All tests passed$(RESET)"
 
 ## clean-all: Clean build artifacts for all services
@@ -74,18 +66,19 @@ clean-all:
 # Linting Targets
 #------------------------------------------------------------------------------
 
-## clj-lint: Run clj-kondo on all Clojure services
+## clj-lint: Run clj-kondo on lib/clj and all services (bb lint, fails on errors)
 clj-lint:
-	@echo "$(BOLD)Running clj-kondo on all services...$(RESET)"
-	@if ! command -v clj-kondo >/dev/null 2>&1; then \
-		echo "$(YELLOW)clj-kondo not found. Install with: brew install borkdude/brew/clj-kondo$(RESET)"; \
-		exit 1; \
-	fi
-	@for svc in $(SERVICES); do \
-		echo "$(GREEN)Linting $$svc...$(RESET)"; \
-		$(MAKE) -C platform/$$svc lint || exit 1; \
-	done
+	@echo "$(BOLD)Running clj-kondo on lib/clj and all services...$(RESET)"
+	@bb lint
 	@echo "$(GREEN)All services linted successfully$(RESET)"
+
+## fmt: Check Clojure formatting everywhere (bb fmt; bb fmt:fix repairs)
+fmt:
+	@bb fmt
+
+## check: Clojure lint + fmt + test everywhere (bb check, what CI runs)
+check:
+	@bb check
 
 ## org-lint: Validate org-mode files
 org-lint:
@@ -160,8 +153,8 @@ outdated:
 # CI Targets
 #------------------------------------------------------------------------------
 
-## ci: Run full CI pipeline (lint, test, c4-check)
-ci: lint test c4-check
+## ci: Run full CI pipeline (bb check, org-lint, c4-check)
+ci: check org-lint c4-check
 	@echo "$(GREEN)CI pipeline completed successfully$(RESET)"
 
 ## ci-quick: Quick CI (lint only)
