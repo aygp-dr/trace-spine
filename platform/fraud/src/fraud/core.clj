@@ -10,14 +10,17 @@
 
    All operations propagate traceparent per L1-wire.org specification."
   (:require
+   [clojure.spec.alpha :as s]
    [clojure.tools.logging :as log]
+   [fraud.specs :as specs]
    [ring.adapter.jetty :as jetty]
    [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
    [reitit.ring :as ring]
    [taoensso.carmine :as car :refer [wcar]]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
-   [jsonista.core :as json])
+   [jsonista.core :as json]
+   [trace-spine.specs :as ts])
   (:import
    [io.opentelemetry.api GlobalOpenTelemetry]
    [io.opentelemetry.api.trace Span SpanKind StatusCode Tracer]
@@ -45,6 +48,10 @@
 
 (defn set-config! [cfg]
   (reset! config (merge default-config cfg)))
+
+(s/fdef set-config!
+  :args (s/cat :cfg ::specs/config)
+  :ret map?)
 
 ;; -----------------------------------------------------------------------------
 ;; Tracing
@@ -101,6 +108,10 @@
           {:pool {}
            :spec {:uri redis-url}}))
 
+(s/fdef init-redis!
+  :args (s/cat :redis-url string?)
+  :ret map?)
+
 (defmacro with-redis [& body]
   `(wcar @redis-conn ~@body))
 
@@ -119,6 +130,10 @@
             :maximumPoolSize 10
             :minimumIdle 2
             :connectionTimeout 5000})))
+
+(s/fdef init-db!
+  :args (s/cat :jdbc-url string?)
+  :ret some?)
 
 ;; -----------------------------------------------------------------------------
 ;; Rule Engine
@@ -179,6 +194,13 @@
       "not"   (not (evaluate-condition tx (first args)))
       false)))
 
+(s/fdef evaluate-condition
+  :args (s/cat :tx ::specs/transaction :condition ::specs/condition)
+  :ret (s/nilable boolean?)
+  ;; agrees with the reference semantics of the rule-condition language
+  :fn (fn [{{:keys [tx condition]} :args ret :ret}]
+        (= (boolean ret) (specs/condition-holds? tx condition))))
+
 (defn- evaluate-rule
   "Evaluate a single rule against transaction, return score delta if triggered."
   [tx rule]
@@ -206,6 +228,10 @@
         (.setAttribute span "fraud.rules.triggered" (count triggered))
         {:score (min 1.0 (max 0.0 total-delta))
          :triggered-rules (mapv :rule-name triggered)}))))
+
+(s/fdef evaluate-rules
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/rules-signal)
 
 ;; -----------------------------------------------------------------------------
 ;; Velocity Checker
@@ -258,6 +284,10 @@
         {:score (min 1.0 (max 0.0 total-delta))
          :checks checks-map}))))
 
+(s/fdef check-velocity
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/velocity-signal)
+
 ;; -----------------------------------------------------------------------------
 ;; Blocklist Manager
 ;; -----------------------------------------------------------------------------
@@ -303,6 +333,10 @@
         {:score score
          :matches (mapv :type matches)}))))
 
+(s/fdef check-blocklist
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/blocklist-signal)
+
 ;; -----------------------------------------------------------------------------
 ;; ML Signal Integration
 ;; -----------------------------------------------------------------------------
@@ -317,6 +351,10 @@
                                     "US") ; simplified
                                1.0 0.0)
    :session_duration_seconds (/ (get-in tx [:metadata :session_duration_ms] 0) 1000.0)})
+
+(s/fdef extract-features
+  :args (s/cat :tx ::specs/transaction)
+  :ret (s/map-of keyword? number?))
 
 (defn score-ml
   "Get ML score for transaction.
@@ -344,6 +382,10 @@
           {:score 0.5
            :model-version "fallback"
            :features-computed false})))))
+
+(s/fdef score-ml
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/ml-signal)
 
 ;; -----------------------------------------------------------------------------
 ;; Risk Scorer (Main Entry Point)
@@ -430,6 +472,21 @@
          :signals        signals
          :latency_ms     latency-ms
          :evaluated_at   (.toString (Instant/now))}))))
+
+(s/fdef score-transaction
+  :args (s/cat :tx ::specs/transaction :traceparent ::ts/traceparent-candidate)
+  :ret ::specs/score-response
+  :fn (fn [{{:keys [tx traceparent]} :args ret :ret}]
+        (let [{:keys [allow-threshold block-threshold]} @config
+              score (:score ret)]
+          (and (= (:transaction_id tx) (:transaction_id ret))
+               ;; the trace id echoed back is the caller's, and only a valid one
+               (= (:trace_id ret)
+                  (when (s/valid? ::ts/traceparent traceparent)
+                    (:trace-id (ts/traceparent-fields traceparent))))
+               (= (:decision ret) (cond (< score allow-threshold) "allow"
+                                        (> score block-threshold) "block"
+                                        :else "review"))))))
 
 ;; -----------------------------------------------------------------------------
 ;; HTTP Handlers
@@ -548,6 +605,10 @@
 
   (jetty/run-jetty wrapped-app {:port port :join? false}))
 
+(s/fdef start-server!
+  :args (s/cat :opts ::specs/server-opts)
+  :ret some?)
+
 (defn -main
   "Main entry point."
   [& args]
@@ -557,6 +618,9 @@
     (start-server! {:port port
                     :redis-url redis-url
                     :postgres-url postgres-url})))
+
+(s/fdef -main
+  :args (s/* string?))
 
 (comment
   ;; REPL development

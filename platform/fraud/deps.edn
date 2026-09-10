@@ -13,7 +13,8 @@
   metosin/reitit                        {:mvn/version "0.7.2"}
   metosin/muuntaja                      {:mvn/version "0.6.10"}
 
-  ;; trace-spine integration
+  ;; trace-spine integration (lib/clj: the shared traceparent spec)
+  io.github.aygp-dr/trace-spine         {:local/root "../../lib/clj"}
   io.opentelemetry/opentelemetry-api    {:mvn/version "1.40.0"}
   io.opentelemetry/opentelemetry-sdk    {:mvn/version "1.40.0"}
 
