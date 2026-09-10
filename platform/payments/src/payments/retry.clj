@@ -102,7 +102,9 @@
 
    delay = min(max_delay, initial_delay * (multiplier ^ attempt))
    jittered = delay * (1 + random(-jitter, +jitter))"
-  [{:keys [initial-delay-ms max-delay-ms multiplier jitter-factor]} attempt]
+  [{:keys [initial-delay-ms max-delay-ms multiplier jitter-factor]
+    :or {initial-delay-ms 100 max-delay-ms 30000 multiplier 2.0 jitter-factor 0.2}}
+   attempt]
   (let [exponential-delay (* initial-delay-ms (Math/pow multiplier attempt))
         capped-delay (min max-delay-ms exponential-delay)
         jitter (* capped-delay jitter-factor (.nextDouble random) 2)
