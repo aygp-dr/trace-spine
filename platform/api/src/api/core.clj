@@ -98,18 +98,19 @@
   (fn [request]
     (let [traceparent (get-in request [:headers "traceparent"])
           tracestate  (get-in request [:headers "tracestate"])
-          ctx         (if traceparent
-                        (trace/continue-trace traceparent tracestate)
-                        (if is-ingress?
-                          (trace/start-trace)
-                          (do
-                            (log/warn "Missing traceparent on internal request"
-                                      {:uri (:uri request)
-                                       :method (:request-method request)})
-                            (when strict-mode?
-                              (throw (ex-info "Missing traceparent on internal call"
-                                              {:type :missing-trace-context})))
-                            (trace/start-trace))))]
+          ;; a malformed or forbidden traceparent is as good as none
+          ctx         (or (when traceparent
+                            (trace/continue-trace traceparent tracestate))
+                          (if is-ingress?
+                            (trace/start-trace)
+                            (do
+                              (log/warn "Missing traceparent on internal request"
+                                        {:uri (:uri request)
+                                         :method (:request-method request)})
+                              (when strict-mode?
+                                (throw (ex-info "Missing traceparent on internal call"
+                                                {:type :missing-trace-context})))
+                              (trace/start-trace))))]
       (-> request
           (assoc :trace-context ctx)
           (handler)
