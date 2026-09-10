@@ -7,7 +7,9 @@
    - Injects trace context into request map
    - Adds traceparent header to responses
    - Wraps HTTP client calls with trace propagation"
-  (:require [trace-spine.core :as core]
+  (:require [clojure.spec.alpha :as s]
+            [trace-spine.core :as core]
+            [trace-spine.specs :as specs]
             [clojure.tools.logging :as log]))
 
 ;; =============================================================================
@@ -68,6 +70,10 @@
                      {"traceparent" (core/format-traceparent ctx)
                       "X-Trace-Id" (:trace-id ctx)})))))))
 
+(s/fdef wrap-trace-context
+  :args (s/cat :handler ::specs/handler :opts (s/? ::specs/middleware-opts))
+  :ret fn?)
+
 (defn wrap-trace-logging
   "Middleware that adds trace context to log MDC.
 
@@ -91,6 +97,10 @@
                    :duration-ms duration})
         response))))
 
+(s/fdef wrap-trace-logging
+  :args (s/cat :handler ::specs/handler)
+  :ret fn?)
+
 ;; =============================================================================
 ;; HTTP Client Wrapper
 ;; =============================================================================
@@ -106,6 +116,12 @@
    (inject-trace-headers ctx {}))
   ([ctx headers]
    (core/inject ctx (into {} headers))))
+
+(s/fdef inject-trace-headers
+  :args (s/cat :ctx ::specs/trace-context :headers (s/? (s/nilable ::specs/carrier)))
+  :ret ::specs/carrier
+  :fn (fn [{{:keys [ctx]} :args ret :ret}]
+        (= (get ret "traceparent") (core/format-traceparent ctx))))
 
 (defn wrap-http-client
   "Wrap an HTTP client function to propagate trace context.
@@ -130,6 +146,10 @@
                   :url url})
       (client-fn url opts'))))
 
+(s/fdef wrap-http-client
+  :args (s/cat :client-fn ::specs/client-fn)
+  :ret fn?)
+
 ;; =============================================================================
 ;; Async Support
 ;; =============================================================================
@@ -149,6 +169,10 @@
                             {"traceparent" (core/format-traceparent ctx)
                              "X-Trace-Id" (:trace-id ctx)})))
          raise)))))
+
+(s/fdef wrap-async-trace
+  :args (s/cat :handler ::specs/async-handler)
+  :ret fn?)
 
 ;; =============================================================================
 ;; Error Handling
@@ -175,3 +199,7 @@
            :body {:error "internal_error"
                   :message "An unexpected error occurred"
                   :meta {:trace_id (:trace-id ctx)}}})))))
+
+(s/fdef wrap-trace-errors
+  :args (s/cat :handler ::specs/handler)
+  :ret fn?)
