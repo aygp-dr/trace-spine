@@ -27,7 +27,8 @@
 
   ;; Tracing / trace-spine
   ;; io.opentelemetry/opentelemetry-api {:mvn/version "1.37.0"}
-  ;; trace-spine/core {:local/root "../../lib/clj"}
+  ;; lib/clj: the shared traceparent spec (trace-spine.specs)
+  io.github.aygp-dr/trace-spine {:local/root "../../lib/clj"}
 
   ;; Hashing (for consistent rollout buckets)
   org.clojure/data.finger-tree {:mvn/version "0.0.3"}

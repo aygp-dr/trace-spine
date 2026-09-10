@@ -10,10 +10,14 @@
   All evaluations include trace-id from the incoming request context,
   enabling downstream correlation in the Metrics Platform."
   (:require
+   [clojure.spec.alpha :as s]
+   [clojure.spec.gen.alpha :as gen]
    [clojure.string :as str]
+   [flags.specs :as specs]
    [taoensso.carmine :as car :refer [wcar]]
    [taoensso.timbre :as log]
-   [java-time.api :as jt])
+   [java-time.api :as jt]
+   [trace-spine.specs :as ts])
   (:import
    [java.nio ByteBuffer]
    [java.nio.charset StandardCharsets]
@@ -29,6 +33,10 @@
 
 (defn redis-conn []
   *redis-conn*)
+
+(s/fdef redis-conn
+  :args (s/cat)
+  :ret map?)
 
 ;; -----------------------------------------------------------------------------
 ;; Trace Context
@@ -51,11 +59,33 @@
          :flags     (Integer/parseInt flags 16)
          :sampled?  (pos? (bit-and (Integer/parseInt flags 16) 0x01))}))))
 
+(s/fdef parse-traceparent
+  :args (s/cat :traceparent ::ts/traceparent-candidate)
+  :ret (s/nilable ::specs/traceparent-fields)
+  :fn (fn [{{tp :traceparent} :args ret :ret}]
+        (if (s/valid? ::ts/traceparent tp)
+          (let [fields (ts/traceparent-fields tp)
+                flags (Integer/parseInt (:flags fields) 16)]
+            (= ret {:trace-id (:trace-id fields)
+                    :parent-id (:parent-id fields)
+                    :flags flags
+                    :sampled? (odd? flags)}))
+          (nil? ret))))
+
 (defn extract-trace-id
   "Extract trace-id from traceparent header or context map."
   [context]
   (or (:trace-id context)
       (some-> context :traceparent parse-traceparent :trace-id)))
+
+(s/fdef extract-trace-id
+  :args (s/cat :context (s/nilable ::specs/context))
+  :ret (s/nilable string?)
+  :fn (fn [{{:keys [context]} :args ret :ret}]
+        (= ret (or (:trace-id context)
+                   (let [tp (:traceparent context)]
+                     (when (s/valid? ::ts/traceparent tp)
+                       (:trace-id (ts/traceparent-fields tp))))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Hashing for Consistent Rollouts
@@ -115,6 +145,18 @@
   (let [hash-input (str bucket-by-value "|" flag-key "|" (or seed "default"))
         hash-val   (murmurhash3-32 hash-input 0)]
     (mod hash-val 100)))
+
+(s/fdef bucket-percentage
+  :args (s/cat :bucket-by-value (s/with-gen any?
+                                  #(gen/one-of [(gen/string-alphanumeric)
+                                                (gen/large-integer)
+                                                (gen/return nil)]))
+               :flag-key (s/nilable string?)
+               :seed (s/nilable string?))
+  :ret (s/int-in 0 100)
+  ;; consistent hashing: the same inputs always land in the same bucket
+  :fn (fn [{{:keys [bucket-by-value flag-key seed]} :args ret :ret}]
+        (= ret (bucket-percentage bucket-by-value flag-key seed))))
 
 ;; -----------------------------------------------------------------------------
 ;; Targeting Rule Evaluation
@@ -198,6 +240,11 @@
         operator     (keyword op)]
     (evaluate-operator operator actual-value values)))
 
+(s/fdef evaluate-clause
+  :args (s/cat :clause ::specs/clause :context ::specs/context)
+  ;; truthy iff the clause matches
+  :ret any?)
+
 (defn evaluate-rule
   "Evaluate a targeting rule against context.
   Returns the rule's variation if matched, nil otherwise."
@@ -210,11 +257,27 @@
        :rule-id  (:id rule)
        :value    variation})))
 
+(s/fdef evaluate-rule
+  :args (s/cat :rule ::specs/rule :context ::specs/context)
+  :ret (s/nilable ::specs/rule-result)
+  :fn (fn [{{:keys [rule]} :args ret :ret}]
+        (or (nil? ret)
+            (and (= (:variation rule) (:value ret))
+                 (= (:id rule) (:rule-id ret))))))
+
 (defn evaluate-rules
   "Evaluate targeting rules in order, returning first match.
   Returns nil if no rules match."
   [rules context]
   (some #(evaluate-rule % context) rules))
+
+(s/fdef evaluate-rules
+  :args (s/cat :rules (s/nilable (s/coll-of ::specs/rule :kind vector? :gen-max 3))
+               :context ::specs/context)
+  :ret (s/nilable ::specs/rule-result)
+  :fn (fn [{{:keys [rules]} :args ret :ret}]
+        (or (nil? ret)
+            (some #(= (:variation %) (:value ret)) rules))))
 
 ;; -----------------------------------------------------------------------------
 ;; Rollout Evaluation
@@ -248,6 +311,17 @@
          :reason :rollout
          :bucket bucket}))))
 
+(s/fdef evaluate-rollout
+  :args (s/cat :rollout (s/nilable ::specs/rollout) :context ::specs/context)
+  :ret (s/nilable ::specs/rollout-result)
+  :fn (fn [{{:keys [rollout]} :args ret :ret}]
+        (cond
+          (not (:enabled rollout)) (nil? ret)
+          (>= (:bucket ret) (:percentage rollout)) (false? (:value ret))
+          (seq (:variations rollout)) (boolean (some #(= (:value %) (:value ret))
+                                                     (:variations rollout)))
+          :else (true? (:value ret)))))
+
 ;; -----------------------------------------------------------------------------
 ;; Redis Cache
 ;; -----------------------------------------------------------------------------
@@ -265,6 +339,10 @@
       (log/warn "Redis cache read failed" {:flag-key flag-key :error (.getMessage e)})
       nil)))
 
+(s/fdef get-cached-flag
+  :args (s/cat :flag-key string?)
+  :ret (s/nilable map?))
+
 (defn set-cached-flag
   "Cache flag definition in Redis."
   [flag-key flag-def]
@@ -274,6 +352,10 @@
     (catch Exception e
       (log/warn "Redis cache write failed" {:flag-key flag-key :error (.getMessage e)}))))
 
+(s/fdef set-cached-flag
+  :args (s/cat :flag-key string? :flag-def map?)
+  :ret (s/nilable string?))
+
 (defn invalidate-cached-flag
   "Remove flag from Redis cache."
   [flag-key]
@@ -282,6 +364,10 @@
           (car/del (redis-key "flags" flag-key)))
     (catch Exception e
       (log/warn "Redis cache invalidation failed" {:flag-key flag-key :error (.getMessage e)}))))
+
+(s/fdef invalidate-cached-flag
+  :args (s/cat :flag-key string?)
+  :ret (s/nilable nat-int?))
 
 ;; -----------------------------------------------------------------------------
 ;; Flag Evaluator
@@ -358,6 +444,19 @@
                  :evaluation-ms (- (current-time-ms) start-ms)
                  :cached        (:cached opts false)}))))))
 
+(s/fdef evaluate-flag
+  :args (s/cat :flag (s/nilable ::specs/flag)
+               :context ::specs/context
+               :opts (s/? ::specs/eval-opts))
+  :ret ::specs/evaluation
+  :fn (fn [{{:keys [flag context]} :args ret :ret}]
+        (and (= (:trace-id ret) (extract-trace-id context))
+             (cond
+               (nil? flag) (= :not-found (:reason ret))
+               (not (:enabled flag)) (and (= :disabled (:reason ret))
+                                          (= (:default flag) (:value ret)))
+               :else (contains? #{:rule-match :rollout :default} (:reason ret))))))
+
 (defn evaluate
   "Evaluate a flag by key, using Redis cache with PostgreSQL fallback.
 
@@ -380,6 +479,10 @@
     ;; Evaluate
     (evaluate-flag flag context {:flag-key flag-key :cached cached?})))
 
+(s/fdef evaluate
+  :args (s/cat :flag-key string? :context ::specs/context :get-flag-fn ifn?)
+  :ret ::specs/evaluation)
+
 (defn evaluate-batch
   "Evaluate multiple flags for the same context.
   Returns map of flag-key -> evaluation result."
@@ -392,6 +495,10 @@
                                flag-keys))
      :trace-id      trace-id
      :evaluation-ms (- (current-time-ms) start-ms)}))
+
+(s/fdef evaluate-batch
+  :args (s/cat :flag-keys (s/coll-of string?) :context ::specs/context :get-flag-fn ifn?)
+  :ret map?)
 
 ;; -----------------------------------------------------------------------------
 ;; Flag Definition Helpers
@@ -413,6 +520,16 @@
    :updated-at  (jt/instant)
    :archived    false})
 
+(s/fdef make-flag
+  :args (s/cat :opts ::specs/flag-opts)
+  :ret ::specs/flag
+  :fn (fn [{{:keys [opts]} :args ret :ret}]
+        (and (= (:key opts) (:key ret))
+             (= (or (:name opts) (:key opts)) (:name ret))
+             (= (boolean (:enabled opts)) (:enabled ret))
+             (= (or (:rules opts) []) (:rules ret))
+             (false? (:archived ret)))))
+
 (defn make-rule
   "Create a targeting rule."
   [{:keys [id description clauses match variation weight]
@@ -424,6 +541,14 @@
    :variation   variation
    :weight      weight})
 
+(s/fdef make-rule
+  :args (s/cat :opts ::specs/rule-opts)
+  :ret ::specs/rule
+  :fn (fn [{{:keys [opts]} :args ret :ret}]
+        (and (string? (:id ret))
+             (= (or (:id opts) (:id ret)) (:id ret))
+             (= (:match opts :all) (:match ret)))))
+
 (defn make-rollout
   "Create a rollout configuration."
   [{:keys [enabled percentage bucket-by seed variations]
@@ -433,6 +558,14 @@
    :bucket-by  bucket-by
    :seed       seed
    :variations variations})
+
+(s/fdef make-rollout
+  :args (s/cat :opts ::specs/rollout-opts)
+  :ret ::specs/rollout
+  :fn (fn [{{:keys [opts]} :args ret :ret}]
+        (and (= (:enabled opts false) (:enabled ret))
+             (= (:percentage opts 0) (:percentage ret))
+             (= (:bucket-by opts "user.id") (:bucket-by ret)))))
 
 ;; -----------------------------------------------------------------------------
 ;; Module Initialization
@@ -446,6 +579,10 @@
     (alter-var-root #'*redis-conn*
                     (constantly {:pool {} :spec {:uri redis-uri}})))
   (log/info "Feature flags evaluator initialized" {:redis redis-uri}))
+
+(s/fdef init!
+  :args (s/cat :opts ::specs/init-opts)
+  :ret nil?)
 
 (comment
   ;; REPL examples
