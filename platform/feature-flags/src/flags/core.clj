@@ -127,16 +127,16 @@
               k1 (Integer/rotateLeft k1 15)
               k1 (unchecked-int (* k1 c2))]
           (swap! h1 #(bit-xor % k1)))))
-    (let [h (-> @h1
-                (bit-xor len)
-                (as-> h (bit-xor h (unsigned-bit-shift-right h 16)))
-                (* (unchecked-int 0x85ebca6b))
-                unchecked-int
-                (as-> h (bit-xor h (unsigned-bit-shift-right h 13)))
-                (* (unchecked-int 0xc2b2ae35))
-                unchecked-int
-                (as-> h (bit-xor h (unsigned-bit-shift-right h 16))))]
-      (Math/abs h))))
+    ;; fmix32, in 32-bit arithmetic: shift the value as an unsigned 32-bit
+    ;; int and wrap the multiplications
+    (let [ushr (fn [h n] (unsigned-bit-shift-right (bit-and h 0xffffffff) n))
+          h (unchecked-int (bit-xor @h1 len))
+          h (unchecked-int (bit-xor h (ushr h 16)))
+          h (unchecked-multiply-int h (unchecked-int 0x85ebca6b))
+          h (unchecked-int (bit-xor h (ushr h 13)))
+          h (unchecked-multiply-int h (unchecked-int 0xc2b2ae35))
+          h (unchecked-int (bit-xor h (ushr h 16)))]
+      (Math/abs (long h)))))
 
 (defn bucket-percentage
   "Compute stable bucket (0-99) for user+flag combination.
