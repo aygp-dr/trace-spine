@@ -189,9 +189,8 @@
    Creates a child span and adds traceparent/tracestate headers."
   [headers trace-context]
   (if-let [parent (:traceparent trace-context)]
-    (assoc headers
-           "traceparent" (child-traceparent parent)
-           "tracestate" (:tracestate trace-context))
+    (cond-> (assoc headers "traceparent" (child-traceparent parent))
+      (:tracestate trace-context) (assoc "tracestate" (:tracestate trace-context)))
     (assoc headers
            "traceparent" (generate-traceparent))))
 
