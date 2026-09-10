@@ -36,7 +36,7 @@
   (and (string? s)
        (re-matches traceparent-pattern s)
        (not (str/includes? s invalid-trace-id))
-       (let [[_ _ _ span-id _] (str/split s #"-")]
+       (let [[_ _ span-id _] (str/split s #"-")]
          (not= span-id invalid-span-id))))
 
 (s/fdef valid-traceparent?
