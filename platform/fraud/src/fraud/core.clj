@@ -345,7 +345,7 @@
   "Extract feature vector for ML scoring."
   [tx]
   {:transaction_amount_cents (:amount_cents tx)
-   :hour_of_day              (.getHour (Instant/now))
+   :hour_of_day              (.getHour (java.time.LocalTime/now))
    :day_of_week              (.getValue (.getDayOfWeek (java.time.LocalDate/now)))
    :ip_country_match         (if (= (get-in tx [:billing_address :country])
                                     "US") ; simplified
