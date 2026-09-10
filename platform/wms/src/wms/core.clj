@@ -9,12 +9,16 @@
    All operations preserve W3C traceparent through async flows."
   (:require
    [clojure.core.async :as async :refer [<! >! go go-loop chan close!]]
+   [clojure.spec.alpha :as s]
+   [clojure.spec.gen.alpha :as gen]
    [clojure.tools.logging :as log]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
    [honey.sql :as hsql]
    [honey.sql.helpers :as h]
-   [jsonista.core :as json]))
+   [jsonista.core :as json]
+   [trace-spine.specs :as ts]
+   [wms.specs :as specs]))
 
 ;; -----------------------------------------------------------------------------
 ;; Trace Context Operations
@@ -37,20 +41,51 @@
         (log/warn "Invalid traceparent format" {:traceparent traceparent})
         nil))))
 
+(s/fdef parse-traceparent
+  :args (s/cat :traceparent ::ts/traceparent-candidate)
+  :ret (s/nilable ::specs/trace-context)
+  :fn (fn [{{tp :traceparent} :args ret :ret}]
+        (if (s/valid? ::ts/traceparent tp)
+          (let [fields (ts/traceparent-fields tp)]
+            (= ret {:trace-id (:trace-id fields)
+                    :span-id (:parent-id fields)
+                    :flags (Integer/parseInt (:flags fields) 16)}))
+          (nil? ret))))
+
 (defn format-traceparent
   "Format trace context as W3C traceparent string."
   [{:keys [trace-id span-id flags] :or {flags 1}}]
   (format "00-%s-%s-%02x" trace-id span-id flags))
+
+(s/fdef format-traceparent
+  :args (s/cat :ctx ::specs/wire-context)
+  :ret ::ts/traceparent
+  ;; parse(format(ctx)) == ctx, with flags defaulting to 1 (sampled)
+  :fn (fn [{{:keys [ctx]} :args ret :ret}]
+        (= (parse-traceparent ret)
+           (merge {:flags 1} (select-keys ctx [:trace-id :span-id :flags])))))
 
 (defn generate-span-id
   "Generate a new 16-character hex span ID."
   []
   (format "%016x" (rand-int Integer/MAX_VALUE)))
 
+(s/fdef generate-span-id
+  :args (s/cat)
+  :ret ::ts/span-id)
+
 (defn create-child-context
   "Create child span context, preserving trace-id and flags."
   [parent-ctx]
   (assoc parent-ctx :span-id (generate-span-id)))
+
+(s/fdef create-child-context
+  :args (s/cat :parent-ctx ::specs/trace-context)
+  :ret ::specs/trace-context
+  :fn (fn [{{parent :parent-ctx} :args child :ret}]
+        (and (= (:trace-id child) (:trace-id parent))
+             (= (:flags child) (:flags parent))
+             (not= (:span-id child) (:span-id parent)))))
 
 (defn continue-or-start
   "Continue existing trace or raise error (WMS is not ingress).
@@ -61,6 +96,10 @@
     (throw (ex-info "WMS must receive traceparent from upstream"
                     {:type :programmer-error
                      :message "Internal service must not originate trace"}))))
+
+(s/fdef continue-or-start
+  :args (s/cat :traceparent ::ts/traceparent-candidate)
+  :ret ::specs/trace-context)
 
 ;; -----------------------------------------------------------------------------
 ;; Inventory Manager
@@ -279,6 +318,10 @@
         {:available? (every? :sufficient? results)
          :items results}))))
 
+(s/fdef make-inventory-manager
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret #(satisfies? InventoryManager %))
+
 ;; -----------------------------------------------------------------------------
 ;; Order Allocator
 ;; -----------------------------------------------------------------------------
@@ -307,6 +350,12 @@
                                                 :from [:inventory]}))]
     ;; Return first warehouse (simplified)
     (-> warehouses first :inventory/warehouse_id)))
+
+(s/fdef select-warehouse
+  :args (s/cat :db-spec ::specs/db-spec
+               :items ::specs/items
+               :shipping-address ::specs/shipping-address)
+  :ret (s/nilable string?))
 
 (defn make-order-allocator
   "Create order allocator with inventory manager dependency."
@@ -445,6 +494,13 @@
             {:allocation-id allocation-id
              :status "cancelled"}))))))
 
+(s/fdef make-order-allocator
+  :args (s/cat :db-spec ::specs/db-spec
+               :inventory-mgr (s/with-gen #(satisfies? InventoryManager %)
+                                #(gen/return (make-inventory-manager {})))
+               :outbox-fn ::specs/outbox-fn)
+  :ret #(satisfies? OrderAllocator %))
+
 ;; -----------------------------------------------------------------------------
 ;; Kafka Consumer
 ;; -----------------------------------------------------------------------------
@@ -459,6 +515,14 @@
    "auto.offset.reset" "earliest"
    "enable.auto.commit" "false"})
 
+(s/fdef create-kafka-consumer-config
+  :args (s/cat :config ::specs/kafka-config)
+  :ret (s/map-of string? string?)
+  :fn (fn [{{:keys [config]} :args ret :ret}]
+        (and (= (:bootstrap-servers config) (get ret "bootstrap.servers"))
+             (= (:group-id config) (get ret "group.id"))
+             (= "false" (get ret "enable.auto.commit")))))
+
 (defn extract-traceparent-from-headers
   "Extract traceparent from Kafka message headers."
   [headers]
@@ -467,6 +531,15 @@
             (when (= "traceparent" (.key header))
               (String. (.value header) "UTF-8")))
           headers)))
+
+(s/fdef extract-traceparent-from-headers
+  :args (s/cat :headers ::specs/kafka-headers)
+  :ret (s/nilable string?)
+  ;; the value of the first traceparent header, decoded as UTF-8
+  :fn (fn [{{:keys [headers]} :args ret :ret}]
+        (= ret (first (for [^org.apache.kafka.common.header.Header h headers
+                            :when (= "traceparent" (.key h))]
+                        (String. (.value h) "UTF-8"))))))
 
 (defn handle-order-created
   "Handle order.created event with trace propagation."
@@ -491,6 +564,11 @@
                                                  :trace-id (:trace-id ctx)})
         (throw e)))))
 
+(s/fdef handle-order-created
+  :args (s/cat :allocator #(satisfies? OrderAllocator %)
+               :message #(instance? org.apache.kafka.clients.consumer.ConsumerRecord %))
+  :ret map?)
+
 (defn handle-order-cancelled
   "Handle order.cancelled event - release allocations."
   [allocator db-spec message]
@@ -514,6 +592,12 @@
       (when allocation
         (cancel-allocation allocator (:allocations/allocation_id allocation) ctx)))))
 
+(s/fdef handle-order-cancelled
+  :args (s/cat :allocator #(satisfies? OrderAllocator %)
+               :db-spec ::specs/db-spec
+               :message #(instance? org.apache.kafka.clients.consumer.ConsumerRecord %))
+  :ret (s/nilable map?))
+
 (defn start-kafka-consumer
   "Start Kafka consumer loop for order events.
    Returns a channel that can be closed to stop the consumer."
@@ -533,11 +617,21 @@
                                         :group-id (:group-id config)})
     stop-ch))
 
+(s/fdef start-kafka-consumer
+  :args (s/cat :config ::specs/kafka-config
+               :allocator #(satisfies? OrderAllocator %)
+               :db-spec ::specs/db-spec)
+  :ret some?)
+
 (defn stop-kafka-consumer
   "Stop Kafka consumer by closing the stop channel."
   [stop-ch]
   (log/info "Stopping Kafka consumer")
   (close! stop-ch))
+
+(s/fdef stop-kafka-consumer
+  :args (s/cat :stop-ch some?)
+  :ret nil?)
 
 ;; -----------------------------------------------------------------------------
 ;; Outbox Publisher
@@ -554,6 +648,10 @@
                 :payload (json/write-value-as-string payload)
                 :traceparent traceparent
                 :tracestate tracestate}))
+
+(s/fdef insert-outbox-event
+  :args (s/cat :tx some? :event ::specs/outbox-event)
+  :ret (s/nilable map?))
 
 (defn drain-outbox
   "Drain outbox table, publishing events to Kafka.
@@ -588,6 +686,10 @@
                              :where [:= :id (:outbox/id event)]}))))
     (count pending)))
 
+(s/fdef drain-outbox
+  :args (s/cat :db-spec ::specs/db-spec :kafka-producer any?)
+  :ret nat-int?)
+
 ;; -----------------------------------------------------------------------------
 ;; System Assembly
 ;; -----------------------------------------------------------------------------
@@ -603,6 +705,15 @@
      :outbox-fn outbox-fn
      :kafka-consumer-stop-ch (atom nil)}))
 
+(s/fdef create-system
+  :args (s/cat :config ::specs/system-config)
+  :ret map?
+  :fn (fn [{system :ret}]
+        (and (satisfies? InventoryManager (:inventory-manager system))
+             (satisfies? OrderAllocator (:order-allocator system))
+             (fn? (:outbox-fn system))
+             (nil? @(:kafka-consumer-stop-ch system)))))
+
 (defn start-system
   "Start WMS system components."
   [{:keys [db-spec kafka-config] :as config} system]
@@ -613,6 +724,10 @@
     (log/info "WMS system started")
     system))
 
+(s/fdef start-system
+  :args (s/cat :config ::specs/system-config :system map?)
+  :ret map?)
+
 (defn stop-system
   "Stop WMS system components."
   [system]
@@ -620,6 +735,10 @@
     (stop-kafka-consumer stop-ch))
   (log/info "WMS system stopped")
   system)
+
+(s/fdef stop-system
+  :args (s/cat :system map?)
+  :ret map?)
 
 ;; -----------------------------------------------------------------------------
 ;; Public API
@@ -637,3 +756,7 @@
                               (catch Exception _ "error"))
                   :kafka "ok"  ; Would check actual connection
                   :shipstation "ok"}})
+
+(s/fdef health-check
+  :args (s/cat :system (s/nilable map?) :db-spec ::specs/db-spec)
+  :ret map?)
