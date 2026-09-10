@@ -70,8 +70,7 @@
     lambdaisland/kaocha            {:mvn/version "1.91.1392"}
     nubank/matcher-combinators     {:mvn/version "3.9.1"}
     org.testcontainers/testcontainers {:mvn/version "1.19.8"}
-    org.testcontainers/postgresql  {:mvn/version "1.19.8"}
-    com.github.fpinschmidt/testcontainers-redis {:mvn/version "1.6.4"}}
+    org.testcontainers/postgresql  {:mvn/version "1.19.8"}}
    :main-opts ["-m" "kaocha.runner"]}
 
   ;; bb lint  ->  clojure -M:lint --lint src test dev
