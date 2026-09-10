@@ -175,9 +175,9 @@
 (defn- evaluate-condition
   "Evaluate a single condition against transaction."
   [tx condition]
-  (let [[op & args] (if (map? condition)
-                      (first condition)
-                      [nil])]
+  (let [[op args] (if (map? condition)
+                    (first condition)
+                    [nil nil])]
     (case op
       "eq"    (let [[a b] args]
                 (= (field-value tx a) b))
@@ -191,7 +191,7 @@
                 (boolean (re-matches (re-pattern pattern) (str (field-value tx a)))))
       "and"   (every? #(evaluate-condition tx %) args)
       "or"    (some #(evaluate-condition tx %) args)
-      "not"   (not (evaluate-condition tx (first args)))
+      "not"   (not (evaluate-condition tx args))
       false)))
 
 (s/fdef evaluate-condition
