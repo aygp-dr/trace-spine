@@ -111,29 +111,34 @@
                      {:attempts attempt
                       :policy policy})
           (throw last-exception))
-        (try
-          (let [result (f)]
-            (when (pos? attempt)
-              (log/info "Retry succeeded"
+        ;; recur is not allowed inside try/catch: the try yields an outcome
+        ;; and the loop decides outside it.
+        (let [outcome (try
+                        {:result (f)}
+                        (catch Exception e
+                          (if (retryable? e)
+                            {:retry e}
+                            (do
+                              (log/debug "Non-retryable error"
+                                         {:error-type (:type (ex-data e))
+                                          :error-message (ex-message e)})
+                              (throw e)))))]
+          (if-let [e (:retry outcome)]
+            (let [delay-ms (calculate-delay policy attempt)]
+              (log/warn "Retryable error, backing off"
                         {:attempt (inc attempt)
-                         :total-attempts attempt}))
-            result)
-          (catch Exception e
-            (if (retryable? e)
-              (let [delay-ms (calculate-delay policy attempt)]
-                (log/warn "Retryable error, backing off"
+                         :max-attempts max-attempts
+                         :delay-ms delay-ms
+                         :error-type (:type (ex-data e))
+                         :error-message (ex-message e)})
+              (Thread/sleep delay-ms)
+              (recur (inc attempt) e))
+            (do
+              (when (pos? attempt)
+                (log/info "Retry succeeded"
                           {:attempt (inc attempt)
-                           :max-attempts max-attempts
-                           :delay-ms delay-ms
-                           :error-type (:type (ex-data e))
-                           :error-message (ex-message e)})
-                (Thread/sleep delay-ms)
-                (recur (inc attempt) e))
-              (do
-                (log/debug "Non-retryable error"
-                           {:error-type (:type (ex-data e))
-                            :error-message (ex-message e)})
-                (throw e)))))))))
+                           :total-attempts attempt}))
+              (:result outcome))))))))
 
 (defn with-retry-async
   "Async version of with-retry using core.async.
