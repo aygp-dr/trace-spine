@@ -300,9 +300,9 @@
 ;; =============================================================================
 
 (defn sampled?
-  "Check if trace is sampled"
+  "Check if trace is sampled (L1-wire: bit 0 of the flags byte)"
   [{:keys [flags]}]
-  (= flags sampled-flag))
+  (boolean (some-> flags (Long/parseLong 16) odd?)))
 
 (s/fdef sampled?
   :args (s/cat :ctx ::specs/trace-context)
