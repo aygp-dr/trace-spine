@@ -19,20 +19,20 @@
   metosin/reitit-swagger {:mvn/version "0.7.2"}
   metosin/reitit-swagger-ui {:mvn/version "0.7.2"}
 
-  ;; GraphQL - Lacinia
+  ;; GraphQL - Lacinia (served through reitit; lacinia-pedestal was dropped
+  ;; because its Jetty 9 websocket jars clash with ring-jetty-adapter's Jetty)
   com.walmartlabs/lacinia {:mvn/version "1.2.2"}
-  com.walmartlabs/lacinia-pedestal {:mvn/version "1.2.2"}
 
   ;; Authentication - Buddy
   buddy/buddy-auth {:mvn/version "3.0.323"}
   buddy/buddy-sign {:mvn/version "3.5.351"}
   buddy/buddy-hashers {:mvn/version "2.0.167"}
-  buddy/buddy-core {:mvn/version "1.12.0"}
+  buddy/buddy-core {:mvn/version "1.12.0-430"}
 
   ;; trace-spine middleware (local path for development)
   ;; In production, use coordinates like:
   ;; com.petstore/trace-spine {:mvn/version "0.1.0"}
-  trace-spine/trace-spine {:local/root "../../../lib/clj"}
+  trace-spine/trace-spine {:local/root "../../lib/clj"}
 
   ;; HTTP Client for downstream calls
   clj-http/clj-http {:mvn/version "3.13.0"}
@@ -58,9 +58,6 @@
   ;; Spec for validation
   org.clojure/spec.alpha {:mvn/version "0.5.238"}
   metosin/spec-tools {:mvn/version "0.10.7"}
-
-  ;; UUID generation
-  clj-ulid/clj-ulid {:mvn/version "0.1.0"}
 
   ;; Environment
   environ/environ {:mvn/version "1.2.0"}}
