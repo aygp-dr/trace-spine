@@ -90,10 +90,10 @@
 ;; =============================================================================
 
 (defn valid-traceparent?
-  "Check if traceparent string matches W3C format"
+  "Check if traceparent string matches W3C format (L1-wire: the validation
+   regex, and neither id is the forbidden all-zero value)"
   [s]
-  (and (string? s)
-       (re-matches traceparent-regex s)))
+  (s/valid? ::specs/traceparent s))
 
 (s/fdef valid-traceparent?
   :args (s/cat :traceparent ::specs/traceparent-candidate)
