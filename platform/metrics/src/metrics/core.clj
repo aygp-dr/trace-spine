@@ -120,6 +120,11 @@
   "Valid event types for metrics collection."
   #{:impression :click :add_to_cart :purchase :experiment :error})
 
+(defn- blank-id?
+  "True unless x is a non-blank string (ids arrive as arbitrary JSON)."
+  [x]
+  (not (and (string? x) (not (str/blank? x)))))
+
 (defn validate-event
   "Validate event against schema. Returns {:valid? bool :errors [...]}"
   [event]
@@ -127,10 +132,10 @@
                  (not (event-types (keyword (:type event))))
                  (conj {:field :type :error "invalid event type"})
 
-                 (str/blank? (:event_id event))
+                 (blank-id? (:event_id event))
                  (conj {:field :event_id :error "required"})
 
-                 (str/blank? (:session_id event))
+                 (blank-id? (:session_id event))
                  (conj {:field :session_id :error "required"})
 
                  (nil? (:timestamp event))
