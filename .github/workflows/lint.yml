@@ -26,6 +26,10 @@ on:
       - "**.org"
       - ".github/workflows/lint.yml"
 
+# least privilege for GITHUB_TOKEN (L7 C1)
+permissions:
+  contents: read
+
 jobs:
   # clj-kondo runs in ci.yml as part of bb check (lib/clj and every
   # service, src/test/dev, failing on errors only).
