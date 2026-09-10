@@ -33,7 +33,8 @@
    Returns nil on invalid input (fail open, log warning)."
   [traceparent]
   (when traceparent
-    (if-let [[_ trace-id span-id flags] (re-matches traceparent-pattern traceparent)]
+    (if-let [[_ trace-id span-id flags] (when (s/valid? ::ts/traceparent traceparent)
+                                          (re-matches traceparent-pattern traceparent))]
       {:trace-id trace-id
        :span-id span-id
        :flags (Integer/parseInt flags 16)}
