@@ -12,7 +12,11 @@
    [clojure.tools.logging :as log]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
-   [jsonista.core :as json])
+   [jsonista.core :as json]
+   [clojure.spec.alpha :as s]
+   [payments.request :as-alias req]
+   [payments.specs :as specs]
+   [trace-spine.specs :as ts])
   (:import
    [java.time Instant Duration]))
 
@@ -90,6 +94,13 @@
     ;; No record found
     {:status :new}))
 
+(s/fdef check
+  :args (s/cat :db-spec ::specs/db-spec
+               :idempotency-key ::req/idempotency-key
+               :request-hash string?
+               :traceparent ::ts/traceparent)
+  :ret ::specs/idempotency-check)
+
 (defn mark-in-progress
   "Mark an idempotency key as in-progress (acquire lock)."
   [db-spec idempotency-key request-hash traceparent]
@@ -106,6 +117,13 @@
     request-hash
     traceparent]))
 
+(s/fdef mark-in-progress
+  :args (s/cat :db-spec ::specs/db-spec
+               :idempotency-key ::req/idempotency-key
+               :request-hash string?
+               :traceparent ::ts/traceparent)
+  :ret (s/nilable map?))
+
 (defn mark-complete
   "Mark idempotency key as complete with cached response."
   [db-spec idempotency-key response]
@@ -121,6 +139,10 @@
     (json/write-value-as-string response)
     idempotency-key]))
 
+(s/fdef mark-complete
+  :args (s/cat :db-spec ::specs/db-spec :idempotency-key ::req/idempotency-key :response map?)
+  :ret (s/nilable map?))
+
 (defn mark-complete-in-tx
   "Mark idempotency key as complete within an existing transaction."
   [tx idempotency-key response]
@@ -135,6 +157,10 @@
       WHERE key = ?"
     (json/write-value-as-string response)
     idempotency-key]))
+
+(s/fdef mark-complete-in-tx
+  :args (s/cat :tx some? :idempotency-key ::req/idempotency-key :response map?)
+  :ret (s/nilable map?))
 
 (defn mark-failed
   "Mark idempotency key as failed."
@@ -154,6 +180,11 @@
     retryable?
     idempotency-key]))
 
+(s/fdef mark-failed
+  :args (s/cat :db-spec ::specs/db-spec :idempotency-key ::req/idempotency-key
+               :error map? :retryable? boolean?)
+  :ret (s/nilable map?))
+
 (defn cleanup-expired
   "Remove expired idempotency keys. Call periodically from background job."
   [db-spec]
@@ -164,6 +195,10 @@
                    RETURNING COUNT(*) as deleted"])]
     (when (pos? (:deleted result 0))
       (log/info "Cleaned up expired idempotency keys" {:count (:deleted result)}))))
+
+(s/fdef cleanup-expired
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret nil?)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Schema
@@ -191,3 +226,7 @@
   "Create idempotency_keys table if it doesn't exist."
   [db-spec]
   (jdbc/execute! db-spec [create-table-sql]))
+
+(s/fdef ensure-table!
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret vector?)

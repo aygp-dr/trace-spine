@@ -22,7 +22,10 @@
    [payments.adapters.paypal :as paypal]
    [payments.adapters.wallet :as wallet]
    [payments.adapters.fraud :as fraud]
-   [trace-spine.core :as trace])
+   [trace-spine.core :as trace]
+   [clojure.spec.alpha :as s]
+   [payments.specs :as specs]
+   [trace-spine.specs :as ts])
   (:import
    [java.util UUID]
    [java.time Instant]))
@@ -49,6 +52,10 @@
   "Update service configuration. Merges with existing config."
   [new-config]
   (swap! config merge new-config))
+
+(s/fdef configure!
+  :args (s/cat :new-config ::specs/service-config)
+  :ret map?)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Trace Context Helpers
@@ -230,6 +237,14 @@
   [request]
   (let [canonical (select-keys request [:amount :currency :customer-id :order-id])]
     (-> canonical pr-str hash str)))
+
+(s/fdef compute-request-hash
+  :args (s/cat :request ::specs/payment-request)
+  :ret string?
+  ;; only the canonical fields count, so a retry with other extras dedupes
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (= ret (compute-request-hash
+                (select-keys request [:amount :currency :customer-id :order-id])))))
 
 (defn orchestrate-payment
   "Main payment orchestration flow.
@@ -414,6 +429,10 @@
                                              retryable?)
                     (throw e)))))))))))
 
+(s/fdef orchestrate-payment
+  :args (s/cat :db-spec ::specs/db-spec :request ::specs/payment-request :headers ::ts/carrier)
+  :ret ::specs/payment-result)
+
 ;;; ---------------------------------------------------------------------------
 ;;; HTTP Handlers (Ring)
 ;;; ---------------------------------------------------------------------------
@@ -472,6 +491,10 @@
                 {:error {:code "internal_error"
                          :message "An unexpected error occurred"}})}))))
 
+(s/fdef charge-handler
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret fn?)
+
 (defn health-handler
   "Ring handler for GET /health endpoint."
   [db-spec]
@@ -490,6 +513,10 @@
                :circuits {:stripe stripe-circuit
                           :paypal paypal-circuit}})})))
 
+(s/fdef health-handler
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret fn?)
+
 ;;; ---------------------------------------------------------------------------
 ;;; Application Entry Point
 ;;; ---------------------------------------------------------------------------
@@ -507,6 +534,10 @@
               {:error {:code "not_found"
                        :message "Endpoint not found"}})})))
 
+(s/fdef create-app
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret fn?)
+
 (defn -main
   "Application entry point."
   [& _args]
@@ -514,6 +545,10 @@
   ;; Actual startup would load config, create db pool, start server
   ;; This is a skeleton - see payments.server for full implementation
   (println "Payment Service skeleton loaded"))
+
+(s/fdef -main
+  :args (s/* string?)
+  :ret nil?)
 
 (comment
   ;; REPL development helpers

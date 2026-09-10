@@ -4,7 +4,10 @@
    Implements retry policy for transient failures while respecting
    non-retryable error codes from payment processors."
   (:require
-   [clojure.tools.logging :as log])
+   [clojure.spec.alpha :as s]
+   [clojure.spec.gen.alpha :as gen]
+   [clojure.tools.logging :as log]
+   [payments.specs :as specs])
   (:import
    [java.util Random]))
 
@@ -67,6 +70,27 @@
       :else
       false)))
 
+(s/fdef retryable?
+  :args (s/cat :e (s/with-gen #(instance? Throwable %)
+                    #(gen/one-of
+                      [(gen/fmap (fn [t] (ex-info "error" {:type t}))
+                                 (gen/elements (concat retryable-error-types
+                                                       non-retryable-error-types
+                                                       [:unknown nil])))
+                       (gen/fmap (fn [st] (ex-info "http" {:http-status st}))
+                                 (gen/elements [400 402 404 429 500 502 503 504]))
+                       (gen/return (java.net.SocketTimeoutException. "timeout"))
+                       (gen/return (java.net.ConnectException. "refused"))])))
+  :ret boolean?
+  :fn (fn [{{:keys [e]} :args ret :ret}]
+        (let [{:keys [type http-status]} (ex-data e)]
+          (= ret (boolean
+                  (and (not (contains? non-retryable-error-types type))
+                       (or (contains? retryable-error-types type)
+                           (contains? #{429 503 504} http-status)
+                           (instance? java.net.SocketTimeoutException e)
+                           (instance? java.net.ConnectException e))))))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Backoff Calculation
 ;;; ---------------------------------------------------------------------------
@@ -84,6 +108,19 @@
         jitter (* capped-delay jitter-factor (.nextDouble random) 2)
         jitter-offset (- jitter (* capped-delay jitter-factor))]
     (long (+ capped-delay jitter-offset))))
+
+(s/fdef calculate-delay
+  :args (s/cat :policy ::specs/retry-policy :attempt ::specs/attempt)
+  :ret nat-int?
+  ;; delay = min(max-delay, initial * multiplier^attempt), jittered by
+  ;; +/- jitter-factor, with the defaults documented in with-retry
+  :fn (fn [{{:keys [policy attempt]} :args ret :ret}]
+        (let [{:keys [initial-delay-ms max-delay-ms multiplier jitter-factor]}
+              (merge {:initial-delay-ms 100 :max-delay-ms 30000
+                      :multiplier 2.0 :jitter-factor 0.2}
+                     policy)
+              capped (min max-delay-ms (* initial-delay-ms (Math/pow multiplier attempt)))]
+          (<= (long (* capped (- 1 jitter-factor))) ret (* capped (+ 1 jitter-factor))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Retry Execution
@@ -140,6 +177,10 @@
                            :total-attempts attempt}))
               (:result outcome))))))))
 
+(s/fdef with-retry
+  :args (s/cat :policy ::specs/retry-policy :f ifn?)
+  :ret any?)
+
 (defn with-retry-async
   "Async version of with-retry using core.async.
    Returns a channel that will receive the result or error."
@@ -147,6 +188,10 @@
   ;; Placeholder for async implementation
   ;; Would use core.async channels and go blocks
   (throw (UnsupportedOperationException. "Async retry not yet implemented")))
+
+(s/fdef with-retry-async
+  :args (s/cat :policy ::specs/retry-policy :f ifn?)
+  :ret any?)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Default Policies

@@ -8,7 +8,9 @@
 
    Uses sliding window for failure rate calculation."
   (:require
-   [clojure.tools.logging :as log])
+   [clojure.spec.alpha :as s]
+   [clojure.tools.logging :as log]
+   [payments.specs :as specs])
   (:import
    [java.time Instant Duration]
    [java.util.concurrent.atomic AtomicReference AtomicLong]))
@@ -72,6 +74,10 @@
   "Configure circuit breaker for a specific key."
   [circuit-key config]
   (swap! config-by-key assoc circuit-key (merge default-config config)))
+
+(s/fdef configure!
+  :args (s/cat :circuit-key ::specs/circuit-key :config ::specs/circuit-config)
+  :ret map?)
 
 (defn- get-config [circuit-key]
   (get @config-by-key circuit-key default-config))
@@ -221,15 +227,29 @@
     (:state (.get (:state circuit)))
     :closed))
 
+(s/fdef state
+  :args (s/cat :circuit-key ::specs/circuit-key)
+  :ret ::specs/circuit-state)
+
 (defn closed?
   "Check if circuit is closed (allowing requests)."
   [circuit-key]
   (not= (state circuit-key) :open))
 
+(s/fdef closed?
+  :args (s/cat :circuit-key ::specs/circuit-key)
+  :ret boolean?)
+
 (defn open?
   "Check if circuit is open (rejecting requests)."
   [circuit-key]
   (= (state circuit-key) :open))
+
+(s/fdef open?
+  :args (s/cat :circuit-key ::specs/circuit-key)
+  :ret boolean?
+  :fn (fn [{{k :circuit-key} :args ret :ret}]
+        (= ret (not (closed? k)))))
 
 (defn metrics
   "Get metrics for a circuit breaker."
@@ -241,6 +261,10 @@
        :failed (.get failed-calls)
        :rejected (.get rejected-calls)
        :state (state circuit-key)})))
+
+(s/fdef metrics
+  :args (s/cat :circuit-key ::specs/circuit-key)
+  :ret (s/nilable ::specs/circuit-metrics))
 
 (defn with-circuit-breaker
   "Execute f with circuit breaker protection.
@@ -277,6 +301,10 @@
         (record-failure! circuit-ref config)
         (throw e)))))
 
+(s/fdef with-circuit-breaker
+  :args (s/cat :circuit-key ::specs/circuit-key :f ifn?)
+  :ret any?)
+
 (defn reset!
   "Reset circuit breaker to closed state. Use for testing or manual recovery."
   [circuit-key]
@@ -284,8 +312,16 @@
     (.set (:state circuit) (make-closed-state))
     (log/info "Circuit breaker manually reset" {:circuit-key circuit-key})))
 
+(s/fdef reset!
+  :args (s/cat :circuit-key ::specs/circuit-key)
+  :ret nil?)
+
 (defn reset-all!
   "Reset all circuit breakers. Use for testing."
   []
   (doseq [[k _] @circuits]
     (reset! k)))
+
+(s/fdef reset-all!
+  :args (s/cat)
+  :ret nil?)

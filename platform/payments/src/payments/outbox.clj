@@ -10,7 +10,10 @@
    [clojure.tools.logging :as log]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
-   [jsonista.core :as json])
+   [jsonista.core :as json]
+   [clojure.spec.alpha :as s]
+   [payments.event :as-alias event]
+   [payments.specs :as specs])
   (:import
    [java.util UUID]))
 
@@ -42,6 +45,10 @@
   "Create outbox table if it doesn't exist."
   [db-spec]
   (jdbc/execute! db-spec [create-table-sql]))
+
+(s/fdef ensure-table!
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret vector?)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Event Publishing (to outbox table)
@@ -83,6 +90,10 @@
 
     event-id))
 
+(s/fdef publish
+  :args (s/cat :tx some? :event ::specs/outbox-event)
+  :ret uuid?)
+
 (defn publish-batch
   "Write multiple events to the outbox table.
 
@@ -113,6 +124,10 @@
 
     (map :id event-ids)))
 
+(s/fdef publish-batch
+  :args (s/cat :tx some? :events (s/coll-of ::specs/outbox-event))
+  :ret (s/coll-of uuid?))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Outbox Relay (reading from outbox, publishing to Kafka)
 ;;; ---------------------------------------------------------------------------
@@ -136,6 +151,10 @@
        LIMIT ?"
      limit])))
 
+(s/fdef fetch-unpublished
+  :args (s/cat :db-spec ::specs/db-spec :limit (s/? pos-int?))
+  :ret (s/coll-of map?))
+
 (defn mark-published
   "Mark events as published.
 
@@ -149,6 +168,10 @@
       (jdbc/execute-one! db-spec (into [query] (map str event-ids)))
       (log/debug "Marked events as published" {:count (count event-ids)}))))
 
+(s/fdef mark-published
+  :args (s/cat :db-spec ::specs/db-spec :event-ids (s/coll-of uuid?))
+  :ret nil?)
+
 (defn increment-retry-count
   "Increment retry count for failed events."
   [db-spec event-ids]
@@ -156,6 +179,10 @@
     (let [placeholders (clojure.string/join "," (repeat (count event-ids) "?::uuid"))
           query (str "UPDATE outbox SET retry_count = retry_count + 1 WHERE id IN (" placeholders ")")]
       (jdbc/execute-one! db-spec (into [query] (map str event-ids))))))
+
+(s/fdef increment-retry-count
+  :args (s/cat :db-spec ::specs/db-spec :event-ids (s/coll-of uuid?))
+  :ret (s/nilable map?))
 
 (defn move-to-dead-letter
   "Move events that have exceeded retry limit to dead letter table."
@@ -172,6 +199,10 @@
       WHERE published_at IS NULL AND retry_count >= ?;"
     max-retries
     max-retries]))
+
+(s/fdef move-to-dead-letter
+  :args (s/cat :db-spec ::specs/db-spec :max-retries nat-int?)
+  :ret (s/nilable map?))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Event Types
@@ -207,6 +238,15 @@
    :processor processor
    :completed-at (str (java.time.Instant/now))})
 
+(s/fdef make-payment-completed-event
+  :args (s/cat :payment-id ::event/payment-id :order-id ::event/order-id
+               :charge-id ::event/charge-id :amount-cents ::event/amount-cents
+               :processor ::event/processor)
+  :ret ::specs/payment-completed-event
+  :fn (fn [{:keys [args ret]}]
+        (= (dissoc args :completed-at)
+           (select-keys ret [:payment-id :order-id :charge-id :amount-cents :processor]))))
+
 (defn make-payment-failed-event
   "Create a payment.failed event payload."
   [payment-id order-id error-code error-message processor]
@@ -217,9 +257,24 @@
    :processor processor
    :failed-at (str (java.time.Instant/now))})
 
+(s/fdef make-payment-failed-event
+  :args (s/cat :payment-id ::event/payment-id :order-id ::event/order-id
+               :error-code ::event/error-code :error-message ::event/error-message
+               :processor ::event/processor)
+  :ret ::specs/payment-failed-event
+  :fn (fn [{:keys [args ret]}]
+        (= args
+           (select-keys ret [:payment-id :order-id :error-code :error-message :processor]))))
+
 (defn make-circuit-opened-event
   "Create a circuit.opened event payload."
   [processor failure-count]
   {:processor processor
    :failure-count failure-count
    :opened-at (str (java.time.Instant/now))})
+
+(s/fdef make-circuit-opened-event
+  :args (s/cat :processor ::event/processor :failure-count ::event/failure-count)
+  :ret ::specs/circuit-opened-event
+  :fn (fn [{:keys [args ret]}]
+        (= args (select-keys ret [:processor :failure-count]))))
