@@ -108,7 +108,7 @@
    Logs warning on malformed input per L1 contracts."
   [s]
   (when (valid-traceparent? s)
-    (let [[_ trace-id span-id flags] (re-matches #"^(\d{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$" s)]
+    (let [[_ _version trace-id span-id flags] (re-matches #"^(\d{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$" s)]
       (when (and trace-id
                  (not= trace-id invalid-trace-id)
                  (not= span-id invalid-span-id))
