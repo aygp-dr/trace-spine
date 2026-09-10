@@ -6,6 +6,9 @@
   org.clojure/spec.alpha    {:mvn/version "0.5.238"}
   org.clojure/core.async    {:mvn/version "1.6.681"}
 
+  ;; trace-spine library (local dep): the shared traceparent spec
+  io.github.aygp-dr/trace-spine {:local/root "../../lib/clj"}
+
   ;; Web / HTTP
   ring/ring-core            {:mvn/version "1.12.1"}
   ring/ring-jetty-adapter   {:mvn/version "1.12.1"}

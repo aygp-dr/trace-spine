@@ -9,9 +9,13 @@
    All operations propagate trace-id for user journey correlation."
   (:require
    [clojure.core.async :as async :refer [<! >! go go-loop chan]]
+   [clojure.spec.alpha :as s]
+   [clojure.spec.gen.alpha :as gen]
    [clojure.string :as str]
    [clojure.tools.logging :as log]
-   [java-time.api :as jt])
+   [java-time.api :as jt]
+   [metrics.specs :as specs]
+   [trace-spine.specs :as ts])
   (:import
    [com.google.common.hash Hashing]
    [java.nio.charset StandardCharsets]))
@@ -46,20 +50,51 @@
          :span-id  span-id
          :flags    (Integer/parseInt flags-hex 16)}))))
 
+(s/fdef parse-traceparent
+  :args (s/cat :traceparent ::ts/traceparent-candidate)
+  :ret (s/nilable ::specs/trace-context)
+  :fn (fn [{{tp :traceparent} :args ret :ret}]
+        (if (s/valid? ::ts/traceparent tp)
+          (let [fields (ts/traceparent-fields tp)]
+            (= ret {:trace-id (:trace-id fields)
+                    :span-id (:parent-id fields)
+                    :flags (Integer/parseInt (:flags fields) 16)}))
+          (nil? ret))))
+
 (defn format-traceparent
   "Format trace context map as W3C traceparent header string."
   [{:keys [trace-id span-id flags]}]
   (format "00-%s-%s-%02x" trace-id span-id (or flags 1)))
+
+(s/fdef format-traceparent
+  :args (s/cat :ctx ::specs/wire-context)
+  :ret ::ts/traceparent
+  ;; parse(format(ctx)) == ctx, with flags defaulting to 1 (sampled)
+  :fn (fn [{{:keys [ctx]} :args ret :ret}]
+        (= (parse-traceparent ret)
+           (merge {:flags 1} (select-keys ctx [:trace-id :span-id :flags])))))
 
 (defn generate-span-id
   "Generate a new random 16-hex span-id."
   []
   (format "%016x" (rand-int Integer/MAX_VALUE)))
 
+(s/fdef generate-span-id
+  :args (s/cat)
+  :ret ::ts/span-id)
+
 (defn create-child-context
   "Create a child trace context, preserving trace-id and flags."
   [parent-ctx]
   (assoc parent-ctx :span-id (generate-span-id)))
+
+(s/fdef create-child-context
+  :args (s/cat :parent-ctx ::specs/trace-context)
+  :ret ::specs/trace-context
+  :fn (fn [{{parent :parent-ctx} :args child :ret}]
+        (and (= (:trace-id child) (:trace-id parent))
+             (= (:flags child) (:flags parent))
+             (not= (:span-id child) (:span-id parent)))))
 
 (defn extract-trace-context
   "Extract trace context from Ring request headers.
@@ -69,6 +104,13 @@
   (-> request
       (get-in [:headers "traceparent"])
       parse-traceparent))
+
+(s/fdef extract-trace-context
+  :args (s/cat :request ::ts/ring-request)
+  :ret (s/nilable ::specs/trace-context)
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (= (some? ret)
+           (s/valid? ::ts/traceparent (get-in request [:headers "traceparent"])))))
 
 ;; =============================================================================
 ;; Event Schema & Validation
@@ -95,6 +137,13 @@
                  (conj {:field :timestamp :error "required"}))]
     {:valid? (empty? errors)
      :errors errors}))
+
+(s/fdef validate-event
+  :args (s/cat :event ::specs/raw-event)
+  :ret ::specs/validation
+  :fn (fn [{{:keys [event]} :args ret :ret}]
+        (and (= (:valid? ret) (empty? (:errors ret)))
+             (= (:valid? ret) (s/valid? ::specs/event event)))))
 
 ;; =============================================================================
 ;; Event Collector
@@ -140,6 +189,18 @@
      :event-chan event-chan
      :batch-size batch-size}))
 
+(s/fdef create-event-collector
+  :args (s/cat :opts (s/with-gen ::specs/collector-opts
+                       #(gen/fmap (fn [[buffer-size batch-size]]
+                                    {:sink (->InMemoryEventSink (atom []))
+                                     :buffer-size buffer-size
+                                     :batch-size batch-size})
+                                  (gen/tuple (gen/choose 1 1000) (gen/choose 1 100)))))
+  :ret ::specs/collector
+  :fn (fn [{{:keys [opts]} :args ret :ret}]
+        (and (identical? (:sink opts) (:sink ret))
+             (= (:batch-size opts 50) (:batch-size ret)))))
+
 (defn collect-events!
   "Collect events into the event channel for async processing.
 
@@ -171,6 +232,12 @@
     {:accepted (count valid-events)
      :rejected rejected-count
      :trace_id (:trace-id trace-ctx)}))
+
+(s/fdef collect-events!
+  :args (s/cat :collector ::specs/collector
+               :events (s/nilable (s/coll-of ::specs/raw-event))
+               :trace-ctx (s/nilable ::specs/trace-context))
+  :ret ::specs/collect-result)
 
 (defn start-collector-worker!
   "Start background worker that drains event channel to sink.
@@ -209,6 +276,11 @@
             (recur [])))))
     done-chan))
 
+(s/fdef start-collector-worker!
+  :args (s/cat :collector ::specs/collector
+               :opts (s/keys :opt-un [::flush-interval-ms]))
+  :ret ::specs/event-chan)
+
 ;; =============================================================================
 ;; A/B Experiment Engine
 ;; =============================================================================
@@ -221,6 +293,10 @@
       .asInt
       Math/abs))
 
+(s/fdef murmur3-hash
+  :args (s/cat :s string?)
+  :ret nat-int?)
+
 (defn compute-bucket
   "Compute bucket (0-99) for experiment assignment.
 
@@ -228,6 +304,13 @@
   [experiment-id bucketing-key]
   (let [hash-input (str experiment-id ":" bucketing-key)]
     (mod (murmur3-hash hash-input) 100)))
+
+(s/fdef compute-bucket
+  :args (s/cat :experiment-id ::specs/experiment-id :bucketing-key ::specs/bucketing-key)
+  :ret ::specs/bucket
+  ;; deterministic: the same user always lands in the same bucket
+  :fn (fn [{{:keys [experiment-id bucketing-key]} :args ret :ret}]
+        (= ret (compute-bucket experiment-id bucketing-key))))
 
 (defn assign-variant
   "Assign variant based on bucket and allocation map.
@@ -239,6 +322,15 @@
           (when (<= lo bucket hi)
             variant))
         allocation))
+
+(s/fdef assign-variant
+  :args (s/cat :bucket ::specs/bucket :allocation ::specs/allocation)
+  :ret (s/nilable keyword?)
+  ;; a variant is returned iff one of the ranges covers the bucket
+  :fn (fn [{{:keys [bucket allocation]} :args ret :ret}]
+        (if ret
+          (let [[lo hi] (get allocation ret)] (<= lo bucket hi))
+          (not-any? (fn [[_ [lo hi]]] (<= lo bucket hi)) allocation))))
 
 (defprotocol ExperimentStore
   "Protocol for experiment configuration storage."
@@ -299,6 +391,15 @@
    :flag-client flag-client
    :event-sink event-sink})
 
+(s/fdef create-ab-engine
+  :args (s/cat :opts (s/with-gen map?
+                       #(gen/return {:experiment-store (->InMemoryExperimentStore (atom {}))
+                                     :flag-client (->MockFeatureFlagClient)
+                                     :event-sink (->InMemoryEventSink (atom []))})))
+  :ret map?
+  :fn (fn [{{:keys [opts]} :args ret :ret}]
+        (= (select-keys opts [:experiment-store :flag-client :event-sink]) ret)))
+
 (defn get-assignment
   "Get experiment variant assignment for bucketing key.
 
@@ -348,6 +449,13 @@
                   :allocation (:allocation experiment)
                   :flag_enabled (:enabled flag-result)}})))
 
+(s/fdef get-assignment
+  :args (s/cat :ab-engine map?
+               :experiment-id ::specs/experiment-id
+               :bucketing-key ::specs/bucketing-key
+               :trace-ctx (s/nilable ::specs/trace-context))
+  :ret map?)
+
 ;; =============================================================================
 ;; HTTP Handlers (Ring)
 ;; =============================================================================
@@ -369,6 +477,10 @@
                       :trace_id nil
                       :details {:required_header "traceparent"
                                 :format "00-{32 hex}-{16 hex}-{2 hex}"}}}})))
+
+(s/fdef wrap-trace-context
+  :args (s/cat :handler ::ts/handler)
+  :ret fn?)
 
 (defn events-batch-handler
   "Handler for POST /events/batch"
@@ -392,6 +504,12 @@
                             :message (ex-message e)
                             :trace_id (:trace-id trace-ctx)}}}))))))
 
+(s/fdef events-batch-handler
+  :args (s/cat :collector (s/with-gen ::specs/collector
+                            #(gen/return (create-event-collector
+                                          {:sink (->InMemoryEventSink (atom []))}))))
+  :ret fn?)
+
 (defn experiment-assign-handler
   "Handler for GET /experiments/assign"
   [ab-engine]
@@ -413,6 +531,13 @@
              :body {:error {:code (:code data)
                             :message (ex-message e)
                             :trace_id (:trace-id trace-ctx)}}}))))))
+
+(s/fdef experiment-assign-handler
+  :args (s/cat :ab-engine (s/with-gen map?
+                            #(gen/return (create-ab-engine
+                                          {:experiment-store (->InMemoryExperimentStore (atom {}))
+                                           :flag-client (->MockFeatureFlagClient)}))))
+  :ret fn?)
 
 ;; =============================================================================
 ;; System Lifecycle
@@ -450,12 +575,23 @@
      :_events-atom events-atom
      :_experiments-atom experiments-atom}))
 
+(s/fdef create-system
+  :args (s/cat :config (s/nilable map?))
+  :ret map?
+  :fn (fn [{system :ret}]
+        (every? #(contains? system %)
+                [:collector :ab-engine :event-sink :experiment-store :flag-client])))
+
 (defn start-system!
   "Start the metrics platform system."
   [system]
   (log/info "Starting metrics platform")
   (let [worker-done (start-collector-worker! (:collector system) {})]
     (assoc system :_worker-done worker-done)))
+
+(s/fdef start-system!
+  :args (s/cat :system map?)
+  :ret map?)
 
 (defn stop-system!
   "Stop the metrics platform system."
@@ -467,6 +603,10 @@
     ;; Wait for worker to finish (with timeout)
     (async/alts!! [done-chan (async/timeout 5000)]))
   (dissoc system :_worker-done))
+
+(s/fdef stop-system!
+  :args (s/cat :system map?)
+  :ret map?)
 
 (comment
   ;; REPL usage examples
