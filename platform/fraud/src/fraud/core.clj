@@ -66,13 +66,9 @@
   "Extract trace context from traceparent header.
    Format: 00-{32 hex trace-id}-{16 hex parent-id}-{2 hex flags}"
   [traceparent]
-  (when traceparent
-    (let [parts (clojure.string/split traceparent #"-")]
-      (when (= 4 (count parts))
-        {:version   (nth parts 0)
-         :trace-id  (nth parts 1)
-         :parent-id (nth parts 2)
-         :flags     (nth parts 3)}))))
+  ;; only a well-formed header (spec/L1-wire.org) yields a context
+  (when (s/valid? ::ts/traceparent traceparent)
+    (ts/traceparent-fields traceparent)))
 
 (defn- with-span
   "Execute body within a new span, propagating trace context."
