@@ -113,7 +113,8 @@
        :trace-id trace-id
        :span-id span-id
        :flags flags
-       :sampled? (= flags sampled-flag)})))
+       ;; L1-wire: bit 0 of the flags byte is `sampled`
+       :sampled? (odd? (Integer/parseInt flags 16))})))
 
 (s/fdef parse-traceparent
   :args (s/cat :s ::ts/traceparent-candidate)
