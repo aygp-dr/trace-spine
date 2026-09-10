@@ -212,6 +212,10 @@
 ;; Convenience
 ;; =============================================================================
 
+(def ^:dynamic *trace-context*
+  "Dynamic var holding current trace context"
+  nil)
+
 (defn with-trace
   "Execute function with trace context in dynamic scope.
 
@@ -219,10 +223,6 @@
   [ctx f]
   (binding [*trace-context* ctx]
     (f)))
-
-(def ^:dynamic *trace-context*
-  "Dynamic var holding current trace context"
-  nil)
 
 (defn current-context
   "Get current trace context from dynamic scope"
