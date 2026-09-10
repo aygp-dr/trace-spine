@@ -96,4 +96,8 @@
    :main-opts ["-m" "antq.core"]}
 
   :repl
-  {:jvm-opts ["-Dclojure.server.repl={:port,5555,:accept,clojure.core.server/repl}"]}}}
+  {:jvm-opts ["-Dclojure.server.repl={:port,5555,:accept,clojure.core.server/repl}"]}}
+
+ ;; Confluent Maven repo for io.confluent/kafka-json-schema-serializer
+ :mvn/repos
+ {"confluent" {:url "https://packages.confluent.io/maven/"}}}
