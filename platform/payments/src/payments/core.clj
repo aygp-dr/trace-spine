@@ -82,7 +82,7 @@
   [headers is-ingress?]
   (let [traceparent (get headers "traceparent")]
     (if traceparent
-      (or (trace/parse traceparent)
+      (or (trace/parse-traceparent traceparent)
           (when is-ingress?
             (trace/start-trace)))
       (when is-ingress?
@@ -145,7 +145,7 @@
 (defn- apply-wallet-credit
   "Apply wallet credit to order if enabled and customer has balance.
    Returns {:applied amount-applied :remaining amount-remaining :debit-id id}"
-  [ctx customer-id order-amount]
+  [ctx customer-id order-id order-amount]
   (when (:wallet-enabled @config)
     (with-child-span ctx "payment.wallet_apply"
       (fn [span-ctx]
@@ -155,7 +155,7 @@
               (wallet/debit span-ctx
                             {:customer-id customer-id
                              :amount applicable
-                             :order-id (:order-id (trace/get-baggage ctx))}))))))))
+                             :order-id order-id}))))))))
 
 (defn- compensate-wallet-debit
   "Reverse a wallet debit when card charge fails."
@@ -219,7 +219,7 @@
                    :event-type event-type
                    :payload payload
                    :traceparent (trace/format-traceparent ctx)
-                   :tracestate (trace/format-tracestate ctx)}))
+                   :tracestate (:tracestate ctx)}))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Payment Orchestrator
@@ -331,6 +331,7 @@
                                         (first (apply-wallet-credit
                                                 orchestrate-ctx
                                                 (:customer-id request)
+                                                (:order-id request)
                                                 (:amount request))))
                         wallet-applied (or (:applied wallet-result) 0)
                         remaining-amount (- (:amount request) wallet-applied)]

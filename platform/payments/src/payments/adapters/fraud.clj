@@ -37,7 +37,7 @@
   "Make request to Fraud Service with trace propagation."
   [ctx method path opts]
   (let [traceparent (trace/format-traceparent ctx)
-        tracestate (trace/format-tracestate ctx)
+        tracestate (:tracestate ctx)
         url (str (:base-url @config) path)
         headers (cond-> {"Content-Type" "application/json"
                          "traceparent" traceparent}
