@@ -1,0 +1,21 @@
+{:min-bb-version "1.12.0"
+ ;; Sub-project of the trace-spine monorepo. The root bb.edn runs these same
+ ;; tasks in every sub-project; they also work standalone from this directory.
+ :tasks
+ {:requires ([babashka.fs :as fs])
+  :init (def src-dirs (filterv fs/directory? ["src" "test" "dev"]))
+
+  test    {:doc "Run the test suite on the JVM (clojure -M:test)"
+           :task (apply shell "clojure -M:test" *command-line-args*)}
+
+  lint    {:doc "Lint with clj-kondo (fails on errors, reports warnings)"
+           :task (apply shell "clojure -M:lint --fail-level error --lint" src-dirs)}
+
+  fmt     {:doc "Check formatting with cljfmt"
+           :task (apply shell "clojure -M:fmt check" src-dirs)}
+
+  fmt:fix {:doc "Fix formatting with cljfmt"
+           :task (apply shell "clojure -M:fmt fix" src-dirs)}
+
+  check   {:doc "lint + fmt + test"
+           :depends [lint fmt test]}}}

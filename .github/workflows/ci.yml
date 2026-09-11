@@ -2,102 +2,56 @@
 # Runs on pull requests and pushes to main
 #
 # Jobs:
-# - lint: clj-kondo for Clojure, org-lint for org-mode docs
-# - test: Run tests for all services
+# - check: bb check = clj-kondo + cljfmt + tests in lib/clj and every
+#   platform service (aygp-dr clojure standard v1). It replaces the old
+#   clj-kondo step and the per-service test matrix.
+# - org-lint: org-mode docs
 # - c4-check: Validate C4 architecture diagrams
+# - build: service uberjars (main only)
 
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
 
-env:
-  CLOJURE_VERSION: "1.12.0"
+# least privilege for GITHUB_TOKEN (L7 C1)
+permissions:
+  contents: read
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: bb check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
-          distribution: "temurin"
-          java-version: "21"
-
-      - name: Setup Clojure
-        uses: DeLaGuardo/setup-clojure@12.5
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
         with:
-          cli: ${{ env.CLOJURE_VERSION }}
-          clj-kondo: "latest"
-
-      - name: Cache Clojure deps
-        uses: actions/cache@v4
+          cli: latest
+          bb: latest
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
-            ~/.clojure/.cpcache
-          key: ${{ runner.os }}-clojure-${{ hashFiles('**/deps.edn') }}
-          restore-keys: |
-            ${{ runner.os }}-clojure-
+          key: clj-${{ runner.os }}-${{ hashFiles('**/deps.edn', '**/bb.edn') }}
+          restore-keys: clj-${{ runner.os }}-
+      - run: bb check
 
-      - name: Lint Clojure (clj-kondo)
-        run: make clj-lint
+  org-lint:
+    name: org-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Lint Org files
         run: make org-lint
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: lint
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - api
-          - wms
-          - payments
-          - wallet
-          - fraud
-          - metrics
-          - feature-flags
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "21"
-
-      - name: Setup Clojure
-        uses: DeLaGuardo/setup-clojure@12.5
-        with:
-          cli: ${{ env.CLOJURE_VERSION }}
-
-      - name: Cache Clojure deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            ~/.clojure/.cpcache
-          key: ${{ runner.os }}-clojure-${{ matrix.service }}-${{ hashFiles(format('platform/{0}/deps.edn', matrix.service)) }}
-          restore-keys: |
-            ${{ runner.os }}-clojure-${{ matrix.service }}-
-            ${{ runner.os }}-clojure-
-
-      - name: Run tests for ${{ matrix.service }}
-        run: make -C platform/${{ matrix.service }} test
 
   c4-check:
     name: C4 Diagrams
@@ -120,7 +74,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [check, org-lint]
     if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
@@ -145,7 +99,7 @@ jobs:
       - name: Setup Clojure
         uses: DeLaGuardo/setup-clojure@12.5
         with:
-          cli: ${{ env.CLOJURE_VERSION }}
+          cli: latest
 
       - name: Cache Clojure deps
         uses: actions/cache@v4
@@ -172,17 +126,17 @@ jobs:
   all-checks:
     name: All Checks Passed
     runs-on: ubuntu-latest
-    needs: [lint, test, c4-check]
+    needs: [check, org-lint, c4-check]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" ]]; then
-            echo "Lint failed"
+          if [[ "${{ needs.check.result }}" != "success" ]]; then
+            echo "bb check failed"
             exit 1
           fi
-          if [[ "${{ needs.test.result }}" != "success" ]]; then
-            echo "Tests failed"
+          if [[ "${{ needs.org-lint.result }}" != "success" ]]; then
+            echo "Org lint failed"
             exit 1
           fi
           if [[ "${{ needs.c4-check.result }}" != "success" ]]; then

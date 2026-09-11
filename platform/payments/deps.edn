@@ -2,7 +2,8 @@
 
  :deps
  {;; Clojure core
-  org.clojure/clojure {:mvn/version "1.12.0"}
+  org.clojure/clojure {:mvn/version "1.12.6"}
+  org.clojure/spec.alpha {:mvn/version "0.5.238"}
 
   ;; trace-spine library (local development)
   io.github.aygp-dr/trace-spine {:local/root "../../lib/clj"}
@@ -51,22 +52,34 @@
   danlentz/clj-uuid {:mvn/version "0.1.9"}}
 
  :aliases
- {:dev
+ {;; REPL: clj -M:dev  (dev/user.clj instruments all s/fdef'd fns)
+  :dev
   {:extra-paths ["dev" "test"]
    :extra-deps
-   {nrepl/nrepl {:mvn/version "1.1.1"}
+   {org.clojure/test.check {:mvn/version "1.1.3"}
+    nrepl/nrepl {:mvn/version "1.1.1"}
     cider/cider-nrepl {:mvn/version "0.47.1"}
-    org.clojure/test.check {:mvn/version "1.1.1"}
     nubank/matcher-combinators {:mvn/version "3.9.1"}
     lambdaisland/kaocha {:mvn/version "1.91.1392"}}}
 
+  ;; bb test  ->  clojure -M:test  (kaocha, as before)
   :test
   {:extra-paths ["test"]
    :extra-deps
-   {org.clojure/test.check {:mvn/version "1.1.1"}
+   {org.clojure/test.check {:mvn/version "1.1.3"}
     nubank/matcher-combinators {:mvn/version "3.9.1"}
     lambdaisland/kaocha {:mvn/version "1.91.1392"}}
    :main-opts ["-m" "kaocha.runner"]}
+
+  ;; bb lint  ->  clojure -M:lint --lint src test dev
+  :lint
+  {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.08.04"}}
+   :main-opts ["-m" "clj-kondo.main"]}
+
+  ;; bb fmt / bb fmt:fix  ->  clojure -M:fmt check|fix src test dev
+  :fmt
+  {:replace-deps {dev.weavejester/cljfmt {:mvn/version "0.16.5"}}
+   :main-opts ["-m" "cljfmt.main"]}
 
   :run
   {:main-opts ["-m" "payments.core"]}
@@ -83,4 +96,8 @@
    :main-opts ["-m" "antq.core"]}
 
   :repl
-  {:jvm-opts ["-Dclojure.server.repl={:port,5555,:accept,clojure.core.server/repl}"]}}}
+  {:jvm-opts ["-Dclojure.server.repl={:port,5555,:accept,clojure.core.server/repl}"]}}
+
+ ;; Confluent Maven repo for io.confluent/kafka-json-schema-serializer
+ :mvn/repos
+ {"confluent" {:url "https://packages.confluent.io/maven/"}}}

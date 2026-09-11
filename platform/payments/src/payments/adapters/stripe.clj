@@ -39,16 +39,16 @@
 
     (try
       (let [response (http/request
-                       (merge
-                         {:method method
-                          :url url
-                          :basic-auth [@api-key ""]
-                          :headers {"Content-Type" "application/x-www-form-urlencoded"
-                                    "Stripe-Version" "2024-04-10"}
-                          :throw-exceptions false
-                          :socket-timeout 30000
-                          :connection-timeout 5000}
-                         opts))
+                      (merge
+                       {:method method
+                        :url url
+                        :basic-auth [@api-key ""]
+                        :headers {"Content-Type" "application/x-www-form-urlencoded"
+                                  "Stripe-Version" "2024-04-10"}
+                        :throw-exceptions false
+                        :socket-timeout 30000
+                        :connection-timeout 5000}
+                       opts))
             status (:status response)
             body (when (:body response)
                    (json/read-value (:body response) json/keyword-keys-object-mapper))]

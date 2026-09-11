@@ -26,66 +26,13 @@ on:
       - "**.org"
       - ".github/workflows/lint.yml"
 
+# least privilege for GITHUB_TOKEN (L7 C1)
+permissions:
+  contents: read
+
 jobs:
-  clj-kondo:
-    name: clj-kondo
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup clj-kondo
-        uses: DeLaGuardo/setup-clojure@12.5
-        with:
-          clj-kondo: "latest"
-
-      - name: Lint lib/clj
-        run: |
-          if [[ -d lib/clj/src ]]; then
-            clj-kondo --lint lib/clj/src
-          fi
-
-      - name: Lint platform/api
-        run: |
-          if [[ -d platform/api/src ]]; then
-            clj-kondo --lint platform/api/src
-          fi
-
-      - name: Lint platform/wms
-        run: |
-          if [[ -d platform/wms/src ]]; then
-            clj-kondo --lint platform/wms/src
-          fi
-
-      - name: Lint platform/payments
-        run: |
-          if [[ -d platform/payments/src ]]; then
-            clj-kondo --lint platform/payments/src
-          fi
-
-      - name: Lint platform/wallet
-        run: |
-          if [[ -d platform/wallet/src ]]; then
-            clj-kondo --lint platform/wallet/src
-          fi
-
-      - name: Lint platform/fraud
-        run: |
-          if [[ -d platform/fraud/src ]]; then
-            clj-kondo --lint platform/fraud/src
-          fi
-
-      - name: Lint platform/metrics
-        run: |
-          if [[ -d platform/metrics/src ]]; then
-            clj-kondo --lint platform/metrics/src
-          fi
-
-      - name: Lint platform/feature-flags
-        run: |
-          if [[ -d platform/feature-flags/src ]]; then
-            clj-kondo --lint platform/feature-flags/src
-          fi
+  # clj-kondo runs in ci.yml as part of bb check (lib/clj and every
+  # service, src/test/dev, failing on errors only).
 
   org-lint:
     name: org-lint
@@ -113,9 +60,9 @@ jobs:
           java-version: "21"
 
       - name: Setup Clojure
-        uses: DeLaGuardo/setup-clojure@12.5
+        uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
         with:
-          cli: "1.12.0"
+          cli: "latest"
 
       - name: Validate deps.edn syntax
         run: |

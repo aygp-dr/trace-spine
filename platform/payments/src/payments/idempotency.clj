@@ -12,7 +12,11 @@
    [clojure.tools.logging :as log]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
-   [jsonista.core :as json])
+   [jsonista.core :as json]
+   [clojure.spec.alpha :as s]
+   [payments.request :as-alias req]
+   [payments.specs :as specs]
+   [trace-spine.specs :as ts])
   (:import
    [java.time Instant Duration]))
 
@@ -39,12 +43,12 @@
   (log/debug "Checking idempotency key" {:key idempotency-key})
 
   (if-let [record (jdbc/execute-one!
-                    db-spec
-                    ["SELECT status, request_hash, response_body, error_data, retryable,
+                   db-spec
+                   ["SELECT status, request_hash, response_body, error_data, retryable,
                              created_at, updated_at
                       FROM idempotency_keys
                       WHERE key = ?"
-                     idempotency-key])]
+                    idempotency-key])]
     (let [status (keyword (:idempotency_keys/status record))
           stored-hash (:idempotency_keys/request_hash record)
           updated-at (:idempotency_keys/updated_at record)]
@@ -67,8 +71,8 @@
 
         :in_progress
         (let [age-seconds (-> (Duration/between
-                                (.toInstant updated-at)
-                                (Instant/now))
+                               (.toInstant updated-at)
+                               (Instant/now))
                               .getSeconds)]
           (if (> age-seconds lock-timeout-seconds)
             ;; Stale lock - allow retry
@@ -90,21 +94,35 @@
     ;; No record found
     {:status :new}))
 
+(s/fdef check
+  :args (s/cat :db-spec ::specs/db-spec
+               :idempotency-key ::req/idempotency-key
+               :request-hash string?
+               :traceparent ::ts/traceparent)
+  :ret ::specs/idempotency-check)
+
 (defn mark-in-progress
   "Mark an idempotency key as in-progress (acquire lock)."
   [db-spec idempotency-key request-hash traceparent]
   (log/debug "Marking idempotency key in-progress" {:key idempotency-key})
 
   (jdbc/execute-one!
-    db-spec
-    ["INSERT INTO idempotency_keys (key, status, request_hash, traceparent, expires_at)
+   db-spec
+   ["INSERT INTO idempotency_keys (key, status, request_hash, traceparent, expires_at)
       VALUES (?, 'in_progress', ?, ?, NOW() + INTERVAL '24 hours')
       ON CONFLICT (key) DO UPDATE SET
         status = 'in_progress',
         updated_at = NOW()"
-     idempotency-key
-     request-hash
-     traceparent]))
+    idempotency-key
+    request-hash
+    traceparent]))
+
+(s/fdef mark-in-progress
+  :args (s/cat :db-spec ::specs/db-spec
+               :idempotency-key ::req/idempotency-key
+               :request-hash string?
+               :traceparent ::ts/traceparent)
+  :ret (s/nilable map?))
 
 (defn mark-complete
   "Mark idempotency key as complete with cached response."
@@ -112,14 +130,18 @@
   (log/debug "Marking idempotency key complete" {:key idempotency-key})
 
   (jdbc/execute-one!
-    db-spec
-    ["UPDATE idempotency_keys
+   db-spec
+   ["UPDATE idempotency_keys
       SET status = 'complete',
           response_body = ?::jsonb,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string response)
-     idempotency-key]))
+    (json/write-value-as-string response)
+    idempotency-key]))
+
+(s/fdef mark-complete
+  :args (s/cat :db-spec ::specs/db-spec :idempotency-key ::req/idempotency-key :response map?)
+  :ret (s/nilable map?))
 
 (defn mark-complete-in-tx
   "Mark idempotency key as complete within an existing transaction."
@@ -127,14 +149,18 @@
   (log/debug "Marking idempotency key complete (in tx)" {:key idempotency-key})
 
   (jdbc/execute-one!
-    tx
-    ["UPDATE idempotency_keys
+   tx
+   ["UPDATE idempotency_keys
       SET status = 'complete',
           response_body = ?::jsonb,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string response)
-     idempotency-key]))
+    (json/write-value-as-string response)
+    idempotency-key]))
+
+(s/fdef mark-complete-in-tx
+  :args (s/cat :tx some? :idempotency-key ::req/idempotency-key :response map?)
+  :ret (s/nilable map?))
 
 (defn mark-failed
   "Mark idempotency key as failed."
@@ -143,27 +169,36 @@
              {:key idempotency-key :retryable? retryable?})
 
   (jdbc/execute-one!
-    db-spec
-    ["UPDATE idempotency_keys
+   db-spec
+   ["UPDATE idempotency_keys
       SET status = 'failed',
           error_data = ?::jsonb,
           retryable = ?,
           updated_at = NOW()
       WHERE key = ?"
-     (json/write-value-as-string error)
-     retryable?
-     idempotency-key]))
+    (json/write-value-as-string error)
+    retryable?
+    idempotency-key]))
+
+(s/fdef mark-failed
+  :args (s/cat :db-spec ::specs/db-spec :idempotency-key ::req/idempotency-key
+               :error map? :retryable? boolean?)
+  :ret (s/nilable map?))
 
 (defn cleanup-expired
   "Remove expired idempotency keys. Call periodically from background job."
   [db-spec]
   (let [result (jdbc/execute-one!
-                 db-spec
-                 ["DELETE FROM idempotency_keys
+                db-spec
+                ["DELETE FROM idempotency_keys
                    WHERE expires_at < NOW()
                    RETURNING COUNT(*) as deleted"])]
     (when (pos? (:deleted result 0))
       (log/info "Cleaned up expired idempotency keys" {:count (:deleted result)}))))
+
+(s/fdef cleanup-expired
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret nil?)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Schema
@@ -191,3 +226,7 @@
   "Create idempotency_keys table if it doesn't exist."
   [db-spec]
   (jdbc/execute! db-spec [create-table-sql]))
+
+(s/fdef ensure-table!
+  :args (s/cat :db-spec ::specs/db-spec)
+  :ret vector?)

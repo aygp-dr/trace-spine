@@ -1,7 +1,7 @@
 # Makefile for api service
 # trace-spine API Gateway
 
-.PHONY: all test lint repl build clean run deps help
+.PHONY: all test lint fmt check repl build clean run deps help
 
 SERVICE := api
 TARGET_JAR := target/$(SERVICE).jar
@@ -13,17 +13,21 @@ TARGET_JAR := target/$(SERVICE).jar
 # Core Targets
 #------------------------------------------------------------------------------
 
-## test: Run tests with Kaocha
+## test: Run tests with Kaocha (same as bb test)
 test:
 	clojure -M:test
 
-## lint: Run clj-kondo linting
+## lint: Run clj-kondo linting (bb lint: fails on errors only)
 lint:
-	@if command -v clj-kondo >/dev/null 2>&1; then \
-		clj-kondo --lint src test; \
-	else \
-		echo "clj-kondo not found, skipping lint"; \
-	fi
+	bb lint
+
+## fmt: Check formatting with cljfmt (bb fmt:fix repairs)
+fmt:
+	bb fmt
+
+## check: lint + fmt + test (bb check)
+check:
+	bb check
 
 ## repl: Start nREPL with CIDER middleware
 repl:

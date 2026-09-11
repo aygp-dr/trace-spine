@@ -40,6 +40,8 @@
    ;; trace-spine
    [trace-spine.core :as trace]
    [trace-spine.middleware :as trace-middleware]
+   [trace-spine.specs :as ts]
+   [api.specs :as specs]
 
    ;; Redis for rate limiting
    [taoensso.carmine :as car :refer [wcar]]
@@ -96,18 +98,19 @@
   (fn [request]
     (let [traceparent (get-in request [:headers "traceparent"])
           tracestate  (get-in request [:headers "tracestate"])
-          ctx         (if traceparent
-                        (trace/continue-trace traceparent tracestate)
-                        (if is-ingress?
-                          (trace/start-trace)
-                          (do
-                            (log/warn "Missing traceparent on internal request"
-                                      {:uri (:uri request)
-                                       :method (:request-method request)})
-                            (when strict-mode?
-                              (throw (ex-info "Missing traceparent on internal call"
-                                              {:type :missing-trace-context})))
-                            (trace/start-trace))))]
+          ;; a malformed or forbidden traceparent is as good as none
+          ctx         (or (when traceparent
+                            (trace/continue-trace traceparent tracestate))
+                          (if is-ingress?
+                            (trace/start-trace)
+                            (do
+                              (log/warn "Missing traceparent on internal request"
+                                        {:uri (:uri request)
+                                         :method (:request-method request)})
+                              (when strict-mode?
+                                (throw (ex-info "Missing traceparent on internal call"
+                                                {:type :missing-trace-context})))
+                              (trace/start-trace))))]
       (-> request
           (assoc :trace-context ctx)
           (handler)
@@ -115,12 +118,24 @@
                   "traceparent" (trace/format-traceparent ctx)
                   "X-Trace-Id" (:trace-id ctx))))))
 
+(s/fdef wrap-trace-context
+  :args (s/cat :handler ::ts/handler :opts ::specs/trace-opts)
+  :ret fn?)
+
 (defn with-trace-metadata
   "Add trace metadata to response body"
   [response trace-ctx]
   (if (map? (:body response))
     (update response :body assoc :meta {:trace_id (:trace-id trace-ctx)})
     response))
+
+(s/fdef with-trace-metadata
+  :args (s/cat :response ::specs/response :trace-ctx (s/nilable ::ts/trace-context))
+  :ret ::specs/response
+  :fn (fn [{{:keys [response trace-ctx]} :args ret :ret}]
+        (if (map? (:body response))
+          (= (:trace-id trace-ctx) (get-in ret [:body :meta :trace_id]))
+          (= response ret))))
 
 ;; =============================================================================
 ;; Rate Limiting
@@ -189,6 +204,10 @@
             (response/status 429)
             (response/header "Retry-After" (str (int (/ (- reset (System/currentTimeMillis)) 1000)))))))))
 
+(s/fdef wrap-rate-limit
+  :args (s/cat :handler ::ts/handler)
+  :ret fn?)
+
 ;; =============================================================================
 ;; Authentication
 ;; =============================================================================
@@ -206,6 +225,10 @@
       (wrap-authentication (jwt-auth-backend))
       (wrap-authorization (jwt-auth-backend))))
 
+(s/fdef wrap-jwt-auth
+  :args (s/cat :handler ::ts/handler)
+  :ret fn?)
+
 (defn auth-required
   "Middleware that requires authenticated user"
   [handler]
@@ -215,6 +238,10 @@
       (-> (response/response {:error "unauthorized"
                               :message "Authentication required"})
           (response/status 401)))))
+
+(s/fdef auth-required
+  :args (s/cat :handler ::ts/handler)
+  :ret fn?)
 
 ;; =============================================================================
 ;; REST Handlers
@@ -227,6 +254,10 @@
    {:status "healthy"
     :timestamp (java.time.Instant/now)}))
 
+(s/fdef health-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response)
+
 (defn ready-handler
   "Readiness probe - checks downstream dependencies"
   [_request]
@@ -238,10 +269,18 @@
              :cart "ok"
              :order "ok"}}))
 
+(s/fdef ready-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response)
+
 (defn live-handler
   "Liveness probe"
   [_request]
   (response/response {:status "alive"}))
+
+(s/fdef live-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response)
 
 ;; Catalog handlers (proxy to Catalog Service)
 (defn list-products-handler
@@ -249,18 +288,24 @@
   [{:keys [query-params trace-context] :as _request}]
   ;; TODO: Forward to Catalog Service with trace context
   (log/info "Listing products" {:trace-id (:trace-id trace-context)
-                                 :params query-params})
+                                :params query-params})
   (response/response
    {:data []
     :pagination {:page 1 :limit 20 :total 0 :total_pages 0}
     :meta {:trace_id (:trace-id trace-context)}}))
+
+(s/fdef list-products-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (= (get-in request [:trace-context :trace-id]) (get-in ret [:body :meta :trace_id]))))
 
 (defn get-product-handler
   "GET /api/v1/products/:id - Get product details"
   [{:keys [path-params trace-context] :as _request}]
   (let [product-id (:id path-params)]
     (log/info "Getting product" {:trace-id (:trace-id trace-context)
-                                  :product-id product-id})
+                                 :product-id product-id})
     ;; TODO: Forward to Catalog Service
     (response/response
      {:data {:id product-id
@@ -268,13 +313,20 @@
              :price {:amount 29.99 :currency "USD"}}
       :meta {:trace_id (:trace-id trace-context)}})))
 
+(s/fdef get-product-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (and (= (get-in request [:path-params :id]) (get-in ret [:body :data :id]))
+             (= (get-in request [:trace-context :trace-id]) (get-in ret [:body :meta :trace_id])))))
+
 ;; Cart handlers (proxy to Cart Service)
 (defn get-cart-handler
   "GET /api/v1/cart - Get current user's cart"
   [{:keys [identity trace-context] :as _request}]
   (let [user-id (:sub identity)]
     (log/info "Getting cart" {:trace-id (:trace-id trace-context)
-                               :user-id user-id})
+                              :user-id user-id})
     ;; TODO: Forward to Cart Service
     (response/response
      {:data {:id (str "cart-" user-id)
@@ -283,14 +335,20 @@
              :item_count 0}
       :meta {:trace_id (:trace-id trace-context)}})))
 
+(s/fdef get-cart-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (= (get-in request [:trace-context :trace-id]) (get-in ret [:body :meta :trace_id]))))
+
 (defn add-to-cart-handler
   "POST /api/v1/cart/items - Add item to cart"
   [{:keys [body identity trace-context] :as _request}]
   (let [user-id (:sub identity)
         {:keys [product_id variant_id quantity]} body]
     (log/info "Adding to cart" {:trace-id (:trace-id trace-context)
-                                 :user-id user-id
-                                 :product-id product_id})
+                                :user-id user-id
+                                :product-id product_id})
     ;; TODO: Forward to Cart Service
     (-> (response/response
          {:data {:id (str "cart-" user-id)
@@ -301,13 +359,20 @@
           :meta {:trace_id (:trace-id trace-context)}})
         (response/status 201))))
 
+(s/fdef add-to-cart-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (and (= 201 (:status ret))
+             (= (get-in request [:trace-context :trace-id]) (get-in ret [:body :meta :trace_id])))))
+
 ;; Order handlers (proxy to Order Service)
 (defn checkout-handler
   "POST /api/v1/checkout - Create order from cart"
   [{:keys [body identity trace-context] :as _request}]
   (let [user-id (:sub identity)]
     (log/info "Processing checkout" {:trace-id (:trace-id trace-context)
-                                      :user-id user-id})
+                                     :user-id user-id})
     ;; TODO:
     ;; 1. Check fraud score via Fraud Service
     ;; 2. Create order via Order Service
@@ -319,6 +384,13 @@
                  :status "confirmed"}
           :meta {:trace_id (:trace-id trace-context)}})
         (response/status 201))))
+
+(s/fdef checkout-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (and (= 201 (:status ret))
+             (= (get-in request [:trace-context :trace-id]) (get-in ret [:body :meta :trace_id])))))
 
 ;; =============================================================================
 ;; GraphQL Handler
@@ -333,12 +405,19 @@
   ;; - Include trace context in resolvers
   (let [{:keys [query variables operation_name]} body]
     (log/info "GraphQL query" {:trace-id (:trace-id trace-context)
-                                :operation operation_name})
+                               :operation operation_name})
     (response/response
      {:data {}
       :extensions {:tracing {:trace_id (:trace-id trace-context)
                              :span_id (:span-id trace-context)
                              :duration_ms 0}}})))
+
+(s/fdef graphql-handler
+  :args (s/cat :request ::specs/request)
+  :ret ::specs/response
+  :fn (fn [{{:keys [request]} :args ret :ret}]
+        (= (get-in request [:trace-context :trace-id])
+           (get-in ret [:body :extensions :tracing :trace_id]))))
 
 ;; =============================================================================
 ;; Router
@@ -424,6 +503,10 @@
     (log/info "Starting API Gateway" {:port port})
     (reset! server (jetty/run-jetty #'app {:port port :join? false}))))
 
+(s/fdef start-server!
+  :args (s/cat :opts (s/? ::specs/server-opts))
+  :ret some?)
+
 (defn stop-server!
   "Stop the Jetty server"
   []
@@ -432,6 +515,10 @@
     (.stop @server)
     (reset! server nil)))
 
+(s/fdef stop-server!
+  :args (s/cat)
+  :ret nil?)
+
 (defn -main
   "Main entry point"
   [& _args]
@@ -439,6 +526,9 @@
   (start-server!)
   (.addShutdownHook (Runtime/getRuntime)
                     (Thread. ^Runnable stop-server!)))
+
+(s/fdef -main
+  :args (s/* string?))
 
 (comment
   ;; REPL usage
@@ -453,5 +543,4 @@
   (jwt/sign {:sub "user-123"
              :roles ["customer"]
              :exp (+ (/ (System/currentTimeMillis) 1000) 3600)}
-            "secret")
-  )
+            "secret"))

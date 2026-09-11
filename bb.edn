@@ -1,0 +1,39 @@
+{:min-bb-version "1.12.0"
+ ;; Monorepo root (aygp-dr clojure standard v1, section 7): every task runs the
+ ;; same bb task in each sub-project that has a deps.edn (lib/clj and
+ ;; platform/*). All sub-projects run even if one fails; the task then fails.
+ :tasks
+ {:requires ([babashka.fs :as fs]
+             [clojure.string :as str])
+  :init (do (def projects
+              (->> (fs/glob "." "*/*/deps.edn")
+                   (map (fn [p] (str (fs/relativize (fs/absolutize ".") (fs/absolutize (fs/parent p))))))
+                   sort
+                   vec))
+            (defn each [task]
+              (let [failed (vec (for [p projects
+                                      :let [_ (println (str "==> " p ": bb " task))
+                                            {:keys [exit]} (shell {:dir p :continue true} (str "bb " task))]
+                                      :when (not (zero? exit))]
+                                  p))]
+                (when (seq failed)
+                  (throw (ex-info (str "bb " task " failed in: " (str/join ", " failed))
+                                  {:task task :failed failed}))))))
+
+  projects {:doc "List the sub-projects the root tasks loop over"
+            :task (run! println projects)}
+
+  test     {:doc "Run every sub-project's test suite (bb test)"
+            :task (each "test")}
+
+  lint     {:doc "clj-kondo every sub-project (fails on errors, reports warnings)"
+            :task (each "lint")}
+
+  fmt      {:doc "cljfmt check every sub-project"
+            :task (each "fmt")}
+
+  fmt:fix  {:doc "cljfmt fix every sub-project"
+            :task (each "fmt:fix")}
+
+  check    {:doc "lint + fmt + test across the monorepo (what CI runs)"
+            :depends [lint fmt test]}}}

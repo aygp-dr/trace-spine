@@ -37,7 +37,7 @@
   "Make request to Fraud Service with trace propagation."
   [ctx method path opts]
   (let [traceparent (trace/format-traceparent ctx)
-        tracestate (trace/format-tracestate ctx)
+        tracestate (:tracestate ctx)
         url (str (:base-url @config) path)
         headers (cond-> {"Content-Type" "application/json"
                          "traceparent" traceparent}
@@ -50,15 +50,15 @@
 
     (try
       (let [response (http/request
-                       (merge
-                         {:method method
-                          :url url
-                          :headers headers
-                          :throw-exceptions false
-                          :socket-timeout (:timeout-ms @config)
-                          :connection-timeout 1000  ; Fast connection timeout
-                          :as :json}
-                         opts))
+                      (merge
+                       {:method method
+                        :url url
+                        :headers headers
+                        :throw-exceptions false
+                        :socket-timeout (:timeout-ms @config)
+                        :connection-timeout 1000  ; Fast connection timeout
+                        :as :json}
+                       opts))
             status (:status response)
             body (:body response)]
 
@@ -119,13 +119,13 @@
   [ctx transaction]
   (try
     (let [response (make-request ctx :post "/score"
-                                  {:body (json/write-value-as-string
-                                           {:customer_id (:customer-id transaction)
-                                            :amount_cents (:amount transaction)
-                                            :order_id (:order-id transaction)
-                                            :payment_method (:payment-method transaction)
-                                            :shipping_address (:shipping-address transaction)
-                                            :device_fingerprint (:device-fingerprint transaction)})})]
+                                 {:body (json/write-value-as-string
+                                         {:customer_id (:customer-id transaction)
+                                          :amount_cents (:amount transaction)
+                                          :order_id (:order-id transaction)
+                                          :payment_method (:payment-method transaction)
+                                          :shipping_address (:shipping-address transaction)
+                                          :device_fingerprint (:device-fingerprint transaction)})})]
       {:risk-score (:risk_score response)
        :decision (keyword (:decision response))
        :signals (:signals response)
@@ -156,13 +156,13 @@
   [ctx transactions]
   (try
     (let [response (make-request ctx :post "/score/batch"
-                                  {:body (json/write-value-as-string
-                                           {:transactions
-                                            (map (fn [t]
-                                                   {:customer_id (:customer-id t)
-                                                    :amount_cents (:amount t)
-                                                    :order_id (:order-id t)})
-                                                 transactions)})})]
+                                 {:body (json/write-value-as-string
+                                         {:transactions
+                                          (map (fn [t]
+                                                 {:customer_id (:customer-id t)
+                                                  :amount_cents (:amount t)
+                                                  :order_id (:order-id t)})
+                                               transactions)})})]
       (map (fn [r]
              {:risk-score (:risk_score r)
               :decision (keyword (:decision r))
@@ -201,10 +201,10 @@
   [ctx report]
   (make-request ctx :post "/reports"
                 {:body (json/write-value-as-string
-                         {:order_id (:order-id report)
-                          :customer_id (:customer-id report)
-                          :fraud_type (:fraud-type report)
-                          :reporter (:reporter report)})}))
+                        {:order_id (:order-id report)
+                         :customer_id (:customer-id report)
+                         :fraud_type (:fraud-type report)
+                         :reporter (:reporter report)})}))
 
 (defn report-false-positive
   "Report a false positive (legitimate transaction marked as fraud).
@@ -219,8 +219,8 @@
   [ctx order-id reason]
   (make-request ctx :post "/reports/false-positive"
                 {:body (json/write-value-as-string
-                         {:order_id order-id
-                          :reason reason})}))
+                        {:order_id order-id
+                         :reason reason})}))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Blocklist Operations
@@ -257,9 +257,9 @@
   [ctx entity-type entity-value reason]
   (make-request ctx :post "/blocklist"
                 {:body (json/write-value-as-string
-                         {:type (name entity-type)
-                          :value entity-value
-                          :reason reason})}))
+                        {:type (name entity-type)
+                         :value entity-value
+                         :reason reason})}))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Velocity Checks

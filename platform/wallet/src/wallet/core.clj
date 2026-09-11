@@ -5,6 +5,7 @@
    before external payment processing. All operations propagate traceparent
    for payment-wallet coordination visibility."
   (:require
+   [clojure.spec.alpha :as s]
    [clojure.tools.logging :as log]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -12,6 +13,7 @@
    [honey.sql.helpers :as h]
    [java-time.api :as jt]
    [medley.core :as m]
+   [wallet.specs :as specs]
    [wallet.trace :as trace])
   (:gen-class))
 
@@ -141,6 +143,10 @@
   [ds]
   (->PostgresBalanceManager ds))
 
+(s/fdef create-balance-manager
+  :args (s/cat :ds ::specs/datasource)
+  :ret #(satisfies? BalanceManager %))
+
 ;; =============================================================================
 ;; Transaction Ledger
 ;; =============================================================================
@@ -177,7 +183,7 @@
      {:builder-fn rs/as-unqualified-maps}))
 
   (get-transactions [_ wallet-id {:keys [limit offset instrument start-date end-date order-id]
-                                   :or {limit 50 offset 0}}]
+                                  :or {limit 50 offset 0}}]
     (let [base-query (-> (h/select :*)
                          (h/from :wallet_transactions)
                          (h/where [:= :wallet_account_id wallet-id])
@@ -205,6 +211,10 @@
   "Creates a PostgresTransactionLedger with the given datasource."
   [ds]
   (->PostgresTransactionLedger ds))
+
+(s/fdef create-transaction-ledger
+  :args (s/cat :ds ::specs/datasource)
+  :ret #(satisfies? TransactionLedger %))
 
 ;; =============================================================================
 ;; Credit Applicator
@@ -383,6 +393,14 @@
          :idempotency-key idempotency-key
          :traceparent (current-traceparent)}))))
 
+(s/fdef apply-credits
+  :args (s/cat :balance-mgr #(satisfies? BalanceManager %)
+               :ledger #(satisfies? TransactionLedger %)
+               :ds ::specs/datasource
+               :customer-id ::specs/customer-id
+               :opts ::specs/apply-credits-opts)
+  :ret ::specs/apply-credits-result)
+
 ;; =============================================================================
 ;; Refund Credits
 ;; =============================================================================
@@ -439,6 +457,14 @@
       {:refunded {:total 0M :breakdown []}
        :new-balance (get-balance balance-mgr customer-id)})))
 
+(s/fdef refund-credits
+  :args (s/cat :balance-mgr #(satisfies? BalanceManager %)
+               :ledger #(satisfies? TransactionLedger %)
+               :ds ::specs/datasource
+               :customer-id ::specs/customer-id
+               :opts ::specs/refund-credits-opts)
+  :ret map?)
+
 ;; =============================================================================
 ;; Gift Card Operations
 ;; =============================================================================
@@ -479,6 +505,10 @@
        :currency (:currency card)
        :expires-at (:expires_at card)
        :is-redeemed false})))
+
+(s/fdef validate-gift-card
+  :args (s/cat :ds ::specs/datasource :code ::specs/gift-card-code)
+  :ret ::specs/gift-card-validation)
 
 (defn redeem-gift-card
   "Redeems a gift card to the customer's wallet.
@@ -550,6 +580,15 @@
              :transaction-id (:id txn)
              :new-gift-card-balance (bigdec (or (:total total-gc) 0))}))))))
 
+(s/fdef redeem-gift-card
+  :args (s/cat :balance-mgr #(satisfies? BalanceManager %)
+               :ledger #(satisfies? TransactionLedger %)
+               :ds ::specs/datasource
+               :customer-id ::specs/customer-id
+               :code ::specs/gift-card-code
+               :idempotency-key ::specs/idempotency-key)
+  :ret map?)
+
 ;; =============================================================================
 ;; Loyalty Points
 ;; =============================================================================
@@ -619,6 +658,14 @@
        :new-balance new-points
        :transaction-id (:id txn)})))
 
+(s/fdef earn-loyalty-points
+  :args (s/cat :balance-mgr #(satisfies? BalanceManager %)
+               :ledger #(satisfies? TransactionLedger %)
+               :ds ::specs/datasource
+               :customer-id ::specs/customer-id
+               :opts ::specs/earn-loyalty-opts)
+  :ret map?)
+
 ;; =============================================================================
 ;; Server Entry Point
 ;; =============================================================================
@@ -632,6 +679,9 @@
     ;; For now this is a skeleton
     (println (str "Wallet Service would start on port " port))
     @(promise)))
+
+(s/fdef -main
+  :args (s/* string?))
 
 (comment
   ;; Development REPL usage

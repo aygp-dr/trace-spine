@@ -2,7 +2,8 @@
 
  :deps
  {;; Clojure core
-  org.clojure/clojure                   {:mvn/version "1.12.0"}
+  org.clojure/clojure                   {:mvn/version "1.12.6"}
+  org.clojure/spec.alpha                {:mvn/version "0.5.238"}
   org.clojure/core.async                {:mvn/version "1.6.681"}
 
   ;; HTTP server
@@ -12,7 +13,8 @@
   metosin/reitit                        {:mvn/version "0.7.2"}
   metosin/muuntaja                      {:mvn/version "0.6.10"}
 
-  ;; trace-spine integration
+  ;; trace-spine integration (lib/clj: the shared traceparent spec)
+  io.github.aygp-dr/trace-spine         {:local/root "../../lib/clj"}
   io.opentelemetry/opentelemetry-api    {:mvn/version "1.40.0"}
   io.opentelemetry/opentelemetry-sdk    {:mvn/version "1.40.0"}
 
@@ -51,21 +53,36 @@
   io.prometheus/simpleclient_httpserver {:mvn/version "0.16.0"}}
 
  :aliases
- {:dev
+ {;; REPL: clj -M:dev  (dev/user.clj instruments all s/fdef'd fns)
+  :dev
   {:extra-paths ["dev" "test"]
    :extra-deps
-   {nrepl/nrepl                    {:mvn/version "1.1.1"}
+   {org.clojure/test.check         {:mvn/version "1.1.3"}
+    nrepl/nrepl                    {:mvn/version "1.1.1"}
     cider/cider-nrepl              {:mvn/version "0.47.1"}
     org.clojure/tools.namespace    {:mvn/version "1.5.0"}}}
 
+  ;; bb test  ->  clojure -M:test  (kaocha was already the runner, but the
+  ;; alias had no :main-opts, so `clojure -M:test` only started a REPL)
   :test
   {:extra-paths ["test"]
    :extra-deps
-   {lambdaisland/kaocha            {:mvn/version "1.91.1392"}
+   {org.clojure/test.check         {:mvn/version "1.1.3"}
+    lambdaisland/kaocha            {:mvn/version "1.91.1392"}
     nubank/matcher-combinators     {:mvn/version "3.9.1"}
     org.testcontainers/testcontainers {:mvn/version "1.19.8"}
-    org.testcontainers/postgresql  {:mvn/version "1.19.8"}
-    com.github.fpinschmidt/testcontainers-redis {:mvn/version "1.6.4"}}}
+    org.testcontainers/postgresql  {:mvn/version "1.19.8"}}
+   :main-opts ["-m" "kaocha.runner"]}
+
+  ;; bb lint  ->  clojure -M:lint --lint src test dev
+  :lint
+  {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.08.04"}}
+   :main-opts ["-m" "clj-kondo.main"]}
+
+  ;; bb fmt / bb fmt:fix  ->  clojure -M:fmt check|fix src test dev
+  :fmt
+  {:replace-deps {dev.weavejester/cljfmt {:mvn/version "0.16.5"}}
+   :main-opts ["-m" "cljfmt.main"]}
 
   :run
   {:main-opts ["-m" "fraud.core"]}

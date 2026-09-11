@@ -5,7 +5,10 @@
    for the Wallet Service. All operations must propagate traceparent for
    payment-wallet coordination visibility."
   (:require
-   [clojure.string :as str])
+   [clojure.spec.alpha :as s]
+   [clojure.string :as str]
+   [trace-spine.specs :as ts]
+   [wallet.specs :as specs])
   (:import
    [java.security SecureRandom]))
 
@@ -33,8 +36,14 @@
   (and (string? s)
        (re-matches traceparent-pattern s)
        (not (str/includes? s invalid-trace-id))
-       (let [[_ _ _ span-id _] (str/split s #"-")]
+       (let [[_ _ span-id _] (str/split s #"-")]
          (not= span-id invalid-span-id))))
+
+(s/fdef valid-traceparent?
+  :args (s/cat :s ::ts/traceparent-candidate)
+  :ret (s/nilable boolean?)
+  :fn (fn [{{tp :s} :args ret :ret}]
+        (= (boolean ret) (s/valid? ::ts/traceparent tp))))
 
 ;; =============================================================================
 ;; Generation
@@ -54,10 +63,18 @@
   []
   (random-hex 32))
 
+(s/fdef generate-trace-id
+  :args (s/cat)
+  :ret ::ts/trace-id)
+
 (defn generate-span-id
   "Generates a new random 16-character hex span ID."
   []
   (random-hex 16))
+
+(s/fdef generate-span-id
+  :args (s/cat)
+  :ret ::ts/span-id)
 
 (defn generate-traceparent
   "Generates a new traceparent with sampled flag."
@@ -65,6 +82,14 @@
    (generate-traceparent (generate-trace-id)))
   ([trace-id]
    (str version "-" trace-id "-" (generate-span-id) "-" sampled-flag)))
+
+(s/fdef generate-traceparent
+  :args (s/cat :trace-id (s/? ::ts/trace-id))
+  :ret ::ts/traceparent
+  :fn (fn [{{:keys [trace-id]} :args ret :ret}]
+        (let [fields (ts/traceparent-fields ret)]
+          (and (= sampled-flag (:flags fields))
+               (or (nil? trace-id) (= trace-id (:trace-id fields)))))))
 
 ;; =============================================================================
 ;; Parsing
@@ -88,7 +113,21 @@
        :trace-id trace-id
        :span-id span-id
        :flags flags
-       :sampled? (= flags sampled-flag)})))
+       ;; L1-wire: bit 0 of the flags byte is `sampled`
+       :sampled? (odd? (Integer/parseInt flags 16))})))
+
+(s/fdef parse-traceparent
+  :args (s/cat :s ::ts/traceparent-candidate)
+  :ret (s/nilable ::specs/traceparent-fields)
+  :fn (fn [{{tp :s} :args ret :ret}]
+        (if (s/valid? ::ts/traceparent tp)
+          (let [fields (ts/traceparent-fields tp)]
+            (and (= (:trace-id fields) (:trace-id ret))
+                 (= (:parent-id fields) (:span-id ret))
+                 (= (:flags fields) (:flags ret))
+                 ;; L1-wire: bit 0 of the flags byte is `sampled`
+                 (= (:sampled? ret) (odd? (Long/parseLong (:flags fields) 16)))))
+          (nil? ret))))
 
 ;; =============================================================================
 ;; Child Span Generation
@@ -103,6 +142,19 @@
   (if-let [parsed (parse-traceparent parent-traceparent)]
     (str version "-" (:trace-id parsed) "-" (generate-span-id) "-" (:flags parsed))
     (generate-traceparent)))
+
+(s/fdef child-traceparent
+  :args (s/cat :parent-traceparent ::ts/traceparent-candidate)
+  :ret ::ts/traceparent
+  :fn (fn [{{parent :parent-traceparent} :args ret :ret}]
+        (let [child (ts/traceparent-fields ret)]
+          (if (s/valid? ::ts/traceparent parent)
+            (let [p (ts/traceparent-fields parent)]
+              (and (= (:trace-id p) (:trace-id child))
+                   (= (:flags p) (:flags child))
+                   (not= (:parent-id p) (:parent-id child))))
+            ;; no usable parent: a fresh, sampled trace
+            (= sampled-flag (:flags child))))))
 
 ;; =============================================================================
 ;; HTTP Header Extraction/Injection
@@ -124,17 +176,33 @@
       {:traceparent traceparent
        :tracestate tracestate})))
 
+(s/fdef extract-trace-context
+  :args (s/cat :headers ::specs/headers)
+  :ret (s/nilable ::specs/trace-context)
+  :fn (fn [{{:keys [headers]} :args ret :ret}]
+        (let [tp (or (get headers "traceparent") (get headers :traceparent))]
+          (= (some? ret) (s/valid? ::ts/traceparent tp)))))
+
 (defn inject-trace-context
   "Injects trace context into headers map for outgoing requests.
 
    Creates a child span and adds traceparent/tracestate headers."
   [headers trace-context]
   (if-let [parent (:traceparent trace-context)]
-    (assoc headers
-           "traceparent" (child-traceparent parent)
-           "tracestate" (:tracestate trace-context))
+    (cond-> (assoc headers "traceparent" (child-traceparent parent))
+      (:tracestate trace-context) (assoc "tracestate" (:tracestate trace-context)))
     (assoc headers
            "traceparent" (generate-traceparent))))
+
+(s/fdef inject-trace-context
+  :args (s/cat :headers ::ts/carrier :trace-context (s/nilable ::specs/trace-context))
+  :ret ::ts/carrier
+  :fn (fn [{{:keys [trace-context]} :args ret :ret}]
+        (let [out (ts/traceparent-fields (get ret "traceparent"))]
+          (if-let [parent (some-> trace-context :traceparent ts/traceparent-fields)]
+            (and (= (:trace-id parent) (:trace-id out))
+                 (not= (:parent-id parent) (:parent-id out)))
+            (some? out)))))
 
 ;; =============================================================================
 ;; Ring Middleware
@@ -155,6 +223,10 @@
                            :tracestate nil})]
       (handler (assoc request :trace-context trace-context)))))
 
+(s/fdef wrap-trace-context
+  :args (s/cat :handler ::ts/handler)
+  :ret fn?)
+
 ;; =============================================================================
 ;; Trace ID Extraction
 ;; =============================================================================
@@ -166,6 +238,13 @@
   [traceparent]
   (when-let [parsed (parse-traceparent traceparent)]
     (:trace-id parsed)))
+
+(s/fdef extract-trace-id
+  :args (s/cat :traceparent ::ts/traceparent-candidate)
+  :ret (s/nilable ::ts/trace-id)
+  :fn (fn [{{tp :traceparent} :args ret :ret}]
+        (= ret (when (s/valid? ::ts/traceparent tp)
+                 (:trace-id (ts/traceparent-fields tp))))))
 
 (comment
   ;; Examples

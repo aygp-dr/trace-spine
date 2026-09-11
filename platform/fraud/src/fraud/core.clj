@@ -10,14 +10,17 @@
 
    All operations propagate traceparent per L1-wire.org specification."
   (:require
+   [clojure.spec.alpha :as s]
    [clojure.tools.logging :as log]
+   [fraud.specs :as specs]
    [ring.adapter.jetty :as jetty]
    [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
    [reitit.ring :as ring]
    [taoensso.carmine :as car :refer [wcar]]
    [next.jdbc :as jdbc]
    [next.jdbc.sql :as sql]
-   [jsonista.core :as json])
+   [jsonista.core :as json]
+   [trace-spine.specs :as ts])
   (:import
    [io.opentelemetry.api GlobalOpenTelemetry]
    [io.opentelemetry.api.trace Span SpanKind StatusCode Tracer]
@@ -46,6 +49,10 @@
 (defn set-config! [cfg]
   (reset! config (merge default-config cfg)))
 
+(s/fdef set-config!
+  :args (s/cat :cfg ::specs/config)
+  :ret map?)
+
 ;; -----------------------------------------------------------------------------
 ;; Tracing
 ;; -----------------------------------------------------------------------------
@@ -59,13 +66,9 @@
   "Extract trace context from traceparent header.
    Format: 00-{32 hex trace-id}-{16 hex parent-id}-{2 hex flags}"
   [traceparent]
-  (when traceparent
-    (let [parts (clojure.string/split traceparent #"-")]
-      (when (= 4 (count parts))
-        {:version   (nth parts 0)
-         :trace-id  (nth parts 1)
-         :parent-id (nth parts 2)
-         :flags     (nth parts 3)}))))
+  ;; only a well-formed header (spec/L1-wire.org) yields a context
+  (when (s/valid? ::ts/traceparent traceparent)
+    (ts/traceparent-fields traceparent)))
 
 (defn- with-span
   "Execute body within a new span, propagating trace context."
@@ -101,6 +104,10 @@
           {:pool {}
            :spec {:uri redis-url}}))
 
+(s/fdef init-redis!
+  :args (s/cat :redis-url string?)
+  :ret map?)
+
 (defmacro with-redis [& body]
   `(wcar @redis-conn ~@body))
 
@@ -119,6 +126,10 @@
             :maximumPoolSize 10
             :minimumIdle 2
             :connectionTimeout 5000})))
+
+(s/fdef init-db!
+  :args (s/cat :jdbc-url string?)
+  :ret some?)
 
 ;; -----------------------------------------------------------------------------
 ;; Rule Engine
@@ -160,9 +171,9 @@
 (defn- evaluate-condition
   "Evaluate a single condition against transaction."
   [tx condition]
-  (let [[op & args] (if (map? condition)
-                      (first condition)
-                      [nil])]
+  (let [[op args] (if (map? condition)
+                    (first condition)
+                    [nil nil])]
     (case op
       "eq"    (let [[a b] args]
                 (= (field-value tx a) b))
@@ -176,8 +187,15 @@
                 (boolean (re-matches (re-pattern pattern) (str (field-value tx a)))))
       "and"   (every? #(evaluate-condition tx %) args)
       "or"    (some #(evaluate-condition tx %) args)
-      "not"   (not (evaluate-condition tx (first args)))
+      "not"   (not (evaluate-condition tx args))
       false)))
+
+(s/fdef evaluate-condition
+  :args (s/cat :tx ::specs/transaction :condition ::specs/condition)
+  :ret (s/nilable boolean?)
+  ;; agrees with the reference semantics of the rule-condition language
+  :fn (fn [{{:keys [tx condition]} :args ret :ret}]
+        (= (boolean ret) (specs/condition-holds? tx condition))))
 
 (defn- evaluate-rule
   "Evaluate a single rule against transaction, return score delta if triggered."
@@ -206,6 +224,10 @@
         (.setAttribute span "fraud.rules.triggered" (count triggered))
         {:score (min 1.0 (max 0.0 total-delta))
          :triggered-rules (mapv :rule-name triggered)}))))
+
+(s/fdef evaluate-rules
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/rules-signal)
 
 ;; -----------------------------------------------------------------------------
 ;; Velocity Checker
@@ -258,6 +280,10 @@
         {:score (min 1.0 (max 0.0 total-delta))
          :checks checks-map}))))
 
+(s/fdef check-velocity
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/velocity-signal)
+
 ;; -----------------------------------------------------------------------------
 ;; Blocklist Manager
 ;; -----------------------------------------------------------------------------
@@ -303,6 +329,10 @@
         {:score score
          :matches (mapv :type matches)}))))
 
+(s/fdef check-blocklist
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/blocklist-signal)
+
 ;; -----------------------------------------------------------------------------
 ;; ML Signal Integration
 ;; -----------------------------------------------------------------------------
@@ -311,12 +341,16 @@
   "Extract feature vector for ML scoring."
   [tx]
   {:transaction_amount_cents (:amount_cents tx)
-   :hour_of_day              (.getHour (Instant/now))
+   :hour_of_day              (.getHour (java.time.LocalTime/now))
    :day_of_week              (.getValue (.getDayOfWeek (java.time.LocalDate/now)))
    :ip_country_match         (if (= (get-in tx [:billing_address :country])
                                     "US") ; simplified
                                1.0 0.0)
    :session_duration_seconds (/ (get-in tx [:metadata :session_duration_ms] 0) 1000.0)})
+
+(s/fdef extract-features
+  :args (s/cat :tx ::specs/transaction)
+  :ret (s/map-of keyword? number?))
 
 (defn score-ml
   "Get ML score for transaction.
@@ -344,6 +378,10 @@
           {:score 0.5
            :model-version "fallback"
            :features-computed false})))))
+
+(s/fdef score-ml
+  :args (s/cat :tx ::specs/transaction)
+  :ret ::specs/ml-signal)
 
 ;; -----------------------------------------------------------------------------
 ;; Risk Scorer (Main Entry Point)
@@ -430,6 +468,21 @@
          :signals        signals
          :latency_ms     latency-ms
          :evaluated_at   (.toString (Instant/now))}))))
+
+(s/fdef score-transaction
+  :args (s/cat :tx ::specs/transaction :traceparent ::ts/traceparent-candidate)
+  :ret ::specs/score-response
+  :fn (fn [{{:keys [tx traceparent]} :args ret :ret}]
+        (let [{:keys [allow-threshold block-threshold]} @config
+              score (:score ret)]
+          (and (= (:transaction_id tx) (:transaction_id ret))
+               ;; the trace id echoed back is the caller's, and only a valid one
+               (= (:trace_id ret)
+                  (when (s/valid? ::ts/traceparent traceparent)
+                    (:trace-id (ts/traceparent-fields traceparent))))
+               (= (:decision ret) (cond (< score allow-threshold) "allow"
+                                        (> score block-threshold) "block"
+                                        :else "review"))))))
 
 ;; -----------------------------------------------------------------------------
 ;; HTTP Handlers
@@ -522,8 +575,7 @@
                  :post rules-create-handler}]
       ["/blocklist/:type" {:post blocklist-add-handler}]
       ["/blocklist/:type/:value" {:delete blocklist-remove-handler}]]])
-   (ring/create-default-handler))
-  )
+   (ring/create-default-handler)))
 
 (def wrapped-app
   (-> app
@@ -549,6 +601,10 @@
 
   (jetty/run-jetty wrapped-app {:port port :join? false}))
 
+(s/fdef start-server!
+  :args (s/cat :opts ::specs/server-opts)
+  :ret some?)
+
 (defn -main
   "Main entry point."
   [& args]
@@ -558,6 +614,9 @@
     (start-server! {:port port
                     :redis-url redis-url
                     :postgres-url postgres-url})))
+
+(s/fdef -main
+  :args (s/* string?))
 
 (comment
   ;; REPL development
@@ -580,5 +639,4 @@
     :billing_address {:country "US" :postal_code "94102"}
     :payment_method {:type "card" :bin "424242" :last_four "4242"}
     :metadata {:channel "web" :session_duration_ms 45000}}
-   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-  )
+   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"))
